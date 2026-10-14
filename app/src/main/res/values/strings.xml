@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">Zen Browser</string>
+    <string name="search_or_enter_address">Search or enter address</string>
+    <string name="workspaces">Workspaces</string>
+    <string name="pinned_tabs">Pinned</string>
+    <string name="essential_tabs">Essentials</string>
+    <string name="open_tabs">Open Tabs</string>
+    <string name="new_tab">New Tab</string>
+    <string name="privacy_shield">Zen Shield</string>
+    <string name="customize_sidebar">Sidebar Studio</string>
+    <string name="zen_mods">Zen Mods</string>
+    <string name="split_view">Split View</string>
+    <string name="reader_mode">Reader Mode</string>
+    <string name="clear_session">Clear Session</string>
+    <string name="trackers_blocked">Trackers &amp; Ads Blocked</string>
+</resources>

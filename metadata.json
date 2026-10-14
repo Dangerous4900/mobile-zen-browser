@@ -1,0 +1,6 @@
+{
+  "name": "Zen Browser",
+  "description": "A calm, privacy-first minimalist mobile web browser featuring customizable vertical workspaces, split-view browsing, tracker blocking, and full sidebar layout control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
