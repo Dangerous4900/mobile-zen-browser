@@ -334,27 +334,58 @@ class ZenWebViewController {
 
     var isMuted = false
 
-    fun toggleMediaPlayPause() {
+    /** Explicit state commands are used by Android's system media controls. */
+    fun setMediaPlaying(playing: Boolean) {
         webView?.evaluateJavascript(
             """
             (function() {
                 window.__zenBypassPauseBlock = true;
                 var els = Array.prototype.slice.call(document.querySelectorAll('video, audio'));
-                var playing = els.filter(function(m) { return !m.paused && !m.ended; });
                 if (els.length) {
-                    if (playing.length) {
-                        playing.forEach(function(m) { m.pause(); });
-                        window.__zenPausedByUs = playing;
-                    } else {
-                        var resume = (window.__zenPausedByUs && window.__zenPausedByUs.length) ? window.__zenPausedByUs : els.slice(0, 1);
-                        resume.forEach(function(m) { try { var p = m.play(); if (p && p.catch) p.catch(function(){}); } catch(e) {} });
-                        window.__zenPausedByUs = [];
-                    }
+                    var candidates = els.filter(function(m) { return ${playing} || !m.ended; });
+                    candidates.forEach(function(m) {
+                        if (${playing}) {
+                            var p = m.play();
+                            if (p && p.catch) p.catch(function() {});
+                        } else {
+                            m.pause();
+                        }
+                    });
+                    window.__zenPausedByUs = ${playing} ? [] : candidates;
                 } else {
-                    var btn = document.querySelector('.ytp-play-button, button[aria-label="Play"], button[aria-label="Pause"]');
+                    var selector = ${playing}
+                        ? '.ytp-play-button[aria-label*="Play"], button[aria-label="Play"], button[aria-label="Play (k)"]'
+                        : '.ytp-play-button[aria-label*="Pause"], button[aria-label="Pause"], button[aria-label="Pause (k)"]';
+                    var btn = document.querySelector(selector);
                     if (btn) btn.click();
                 }
                 setTimeout(function() { window.__zenBypassPauseBlock = false; }, 400);
+            })();
+            """.trimIndent(),
+            null
+        )
+    }
+
+    fun toggleMediaPlayPause() {
+        webView?.evaluateJavascript(
+            """
+            (function() {
+                var els = Array.prototype.slice.call(document.querySelectorAll('video, audio'));
+                var playing = els.some(function(m) { return !m.paused && !m.ended; });
+                if (els.length) {
+                    window.__zenBypassPauseBlock = true;
+                    els.forEach(function(m) {
+                        if (playing) m.pause();
+                        else if (!m.ended) { var p = m.play(); if (p && p.catch) p.catch(function() {}); }
+                    });
+                    window.__zenPausedByUs = playing ? els : [];
+                    setTimeout(function() { window.__zenBypassPauseBlock = false; }, 400);
+                } else {
+                    var btn = document.querySelector(playing
+                        ? '.ytp-play-button[aria-label*="Pause"], button[aria-label="Pause"]'
+                        : '.ytp-play-button[aria-label*="Play"], button[aria-label="Play"]');
+                    if (btn) btn.click();
+                }
             })();
             """.trimIndent(),
             null

@@ -18,6 +18,8 @@ import android.os.PowerManager
 
 /** Bridge from the system (notification buttons, lock screen, Bluetooth) to the in-app web controllers. */
 object ZenMediaBus {
+    /** Explicit state commands avoid interpreting Android's Play and Pause as the same toggle. */
+    @Volatile var onSetPlaying: ((Boolean) -> Unit)? = null
     @Volatile var onPlayPause: (() -> Unit)? = null
     @Volatile var onStop: (() -> Unit)? = null
 }
@@ -40,8 +42,8 @@ class ZenMediaService : Service() {
         createChannel()
         session = MediaSession(this, "ZenBrowserMedia").apply {
             setCallback(object : MediaSession.Callback() {
-                override fun onPlay() { ZenMediaBus.onPlayPause?.invoke() }
-                override fun onPause() { ZenMediaBus.onPlayPause?.invoke() }
+                override fun onPlay() { ZenMediaBus.onSetPlaying?.invoke(true) ?: ZenMediaBus.onPlayPause?.invoke() }
+                override fun onPause() { ZenMediaBus.onSetPlaying?.invoke(false) ?: ZenMediaBus.onPlayPause?.invoke() }
                 override fun onStop() { ZenMediaBus.onStop?.invoke() }
             })
             isActive = true
@@ -56,6 +58,8 @@ class ZenMediaService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_PLAY -> ZenMediaBus.onSetPlaying?.invoke(true) ?: ZenMediaBus.onPlayPause?.invoke()
+            ACTION_PAUSE -> ZenMediaBus.onSetPlaying?.invoke(false) ?: ZenMediaBus.onPlayPause?.invoke()
             ACTION_PLAY_PAUSE -> ZenMediaBus.onPlayPause?.invoke()
             ACTION_STOP -> ZenMediaBus.onStop?.invoke()
             ACTION_UPDATE -> update(
@@ -111,8 +115,8 @@ class ZenMediaService : Service() {
             .setOngoing(playing)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .addAction(
-                if (playing) action(android.R.drawable.ic_media_pause, "Pause", ACTION_PLAY_PAUSE, 1)
-                else action(android.R.drawable.ic_media_play, "Play", ACTION_PLAY_PAUSE, 1)
+                if (playing) action(android.R.drawable.ic_media_pause, "Pause", ACTION_PAUSE, 1)
+                else action(android.R.drawable.ic_media_play, "Play", ACTION_PLAY, 1)
             )
             .addAction(action(android.R.drawable.ic_menu_close_clear_cancel, "Stop", ACTION_STOP, 2))
             .apply {
@@ -155,6 +159,8 @@ class ZenMediaService : Service() {
 
     companion object {
         const val ACTION_UPDATE = "com.example.media.UPDATE"
+        const val ACTION_PLAY = "com.example.media.PLAY"
+        const val ACTION_PAUSE = "com.example.media.PAUSE"
         const val ACTION_PLAY_PAUSE = "com.example.media.PLAY_PAUSE"
         const val ACTION_STOP = "com.example.media.STOP"
         const val EXTRA_PLAYING = "playing"
