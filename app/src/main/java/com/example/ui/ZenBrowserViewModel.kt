@@ -1312,7 +1312,8 @@ class ZenBrowserViewModel(
         sessionState.update {
             it.copy(
                 mediaPlaybackState = MediaPlaybackState(
-                    isActive = isActive,
+                    // Stay active while paused so the system notification keeps its Play button.
+                    isActive = isActive || (it.mediaPlaybackState.isActive && it.mediaPlaybackState.tabId == tabId),
                     isPlaying = isPlaying,
                     // Mute is user intent: keep it while the same tab keeps reporting media.
                     isMuted = it.mediaPlaybackState.isMuted && it.mediaPlaybackState.tabId == tabId,

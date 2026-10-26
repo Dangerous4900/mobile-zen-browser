@@ -71,6 +71,18 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // Publish playback to Android (MediaSession + foreground service) so media is detected,
+            // controllable from the shade/lock screen/headset, and survives screen-off.
+            val media = uiState.mediaPlaybackState
+            LaunchedEffect(media.isActive, media.isPlaying, media.title, media.domain, uiState.sidebarConfig.backgroundPlayEnabled) {
+                if (media.isActive && uiState.sidebarConfig.backgroundPlayEnabled) {
+                    ensureNotificationPermission()
+                    ZenMediaService.sync(applicationContext, media.isPlaying, media.title, media.domain)
+                } else {
+                    ZenMediaService.stop(applicationContext)
+                }
+            }
+
             LaunchedEffect(uiState.mediaPlaybackState.isPlaying, uiState.sidebarConfig.playInWindowPipEnabled) {
                 if (canUsePip()) {
                     val auto = uiState.mediaPlaybackState.isPlaying && uiState.sidebarConfig.playInWindowPipEnabled
@@ -88,6 +100,33 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }
+    private var askedNotificationPermission = false
+
+    private fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !askedNotificationPermission &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            askedNotificationPermission = true
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Keep page JS timers + audio running when the screen turns off / app is backgrounded.
+        val media = viewModelRef?.uiState?.value?.mediaPlaybackState
+        if (media?.isActive == true && viewModelRef?.uiState?.value?.sidebarConfig?.backgroundPlayEnabled != false) {
+            com.example.ui.components.ZenWebViewManager.getAllWebViews().values.firstOrNull()?.resumeTimers()
+        }
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) ZenMediaService.stop(applicationContext)
+        super.onDestroy()
     }
 
     override fun onUserLeaveHint() {
