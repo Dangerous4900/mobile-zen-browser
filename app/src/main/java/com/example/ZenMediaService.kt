@@ -159,6 +159,8 @@ class ZenMediaService : Service() {
 
     companion object {
         const val ACTION_UPDATE = "com.example.media.UPDATE"
+        const val ACTION_PLAY = "com.example.media.PLAY"
+        const val ACTION_PAUSE = "com.example.media.PAUSE"
         const val ACTION_PLAY_PAUSE = "com.example.media.PLAY_PAUSE"
         const val ACTION_STOP = "com.example.media.STOP"
         const val EXTRA_PLAYING = "playing"
