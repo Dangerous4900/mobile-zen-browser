@@ -5,6 +5,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.core.view.WindowCompat
@@ -27,6 +29,7 @@ import android.util.Rational
 class MainActivity : ComponentActivity() {
 
     private var viewModelRef: ZenBrowserViewModel? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     private val database: ZenDatabase by lazy {
         Room.databaseBuilder(
@@ -52,6 +55,29 @@ class MainActivity : ComponentActivity() {
             )
             viewModelRef = browserViewModel
             val uiState by browserViewModel.uiState.collectAsStateWithLifecycle()
+
+            val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission()
+            ) { _ -> }
+
+            LaunchedEffect(Unit) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (androidx.core.content.ContextCompat.checkSelfPermission(
+                            applicationContext, android.Manifest.permission.POST_NOTIFICATIONS
+                        ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            }
+
+            LaunchedEffect(uiState.mediaPlaybackState.isPlaying) {
+                if (uiState.mediaPlaybackState.isPlaying) {
+                    acquireWakeLock()
+                } else {
+                    releaseWakeLock()
+                }
+            }
 
             LaunchedEffect(uiState.sidebarConfig.hideStatusBarFullscreen, uiState.isCompactFullscreen) {
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -90,9 +116,38 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun acquireWakeLock() {
+        try {
+            if (wakeLock == null) {
+                val powerManager = getSystemService(POWER_SERVICE) as android.os.PowerManager
+                wakeLock = powerManager.newWakeLock(
+                    android.os.PowerManager.PARTIAL_WAKE_LOCK,
+                    "ZenBrowser::MediaPlaybackWakeLock"
+                ).apply {
+                    setReferenceCounted(false)
+                }
+            }
+            if (wakeLock?.isHeld == false) {
+                wakeLock?.acquire(4 * 60 * 60 * 1000L)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (_: Exception) {}
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        releaseWakeLock()
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // On Android 12+ setAutoEnterEnabled handles this; entering twice makes PiP flicker.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) enterPipIfPlaying()
     }
 
@@ -122,18 +177,17 @@ class MainActivity : ComponentActivity() {
 
     fun enterPipManual(): Boolean = enterPipNow()
 
-    /**
-     * Enters PiP. UI state is flipped only in onPictureInPictureModeChanged, so a refused request
-     * (PiP disabled in system settings, unsupported device) can no longer leave the UI stuck blank.
-     */
     private fun enterPipNow(): Boolean {
         if (!canUsePip() || isInPictureInPictureMode) return false
         viewModelRef?.setSidebarOpen(false)
-        return try {
-            enterPictureInPictureMode(buildPipParams(autoEnter = false))
-        } catch (e: IllegalStateException) {
-            false
-        }
+        window.decorView.postDelayed({
+            if (!isInPictureInPictureMode) {
+                try {
+                    enterPictureInPictureMode(buildPipParams(autoEnter = false))
+                } catch (_: Exception) {}
+            }
+        }, 100)
+        return true
     }
 
     override fun onPictureInPictureModeChanged(
