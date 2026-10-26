@@ -18,6 +18,8 @@ import android.os.PowerManager
 
 /** Bridge from the system (notification buttons, lock screen, Bluetooth) to the in-app web controllers. */
 object ZenMediaBus {
+    /** Explicit state commands avoid interpreting Android's Play and Pause as the same toggle. */
+    @Volatile var onSetPlaying: ((Boolean) -> Unit)? = null
     @Volatile var onPlayPause: (() -> Unit)? = null
     @Volatile var onStop: (() -> Unit)? = null
 }
