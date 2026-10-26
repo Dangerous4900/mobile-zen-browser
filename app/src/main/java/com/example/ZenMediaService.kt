@@ -115,8 +115,8 @@ class ZenMediaService : Service() {
             .setOngoing(playing)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .addAction(
-                if (playing) action(android.R.drawable.ic_media_pause, "Pause", ACTION_PLAY_PAUSE, 1)
-                else action(android.R.drawable.ic_media_play, "Play", ACTION_PLAY_PAUSE, 1)
+                if (playing) action(android.R.drawable.ic_media_pause, "Pause", ACTION_PAUSE, 1)
+                else action(android.R.drawable.ic_media_play, "Play", ACTION_PLAY, 1)
             )
             .addAction(action(android.R.drawable.ic_menu_close_clear_cancel, "Stop", ACTION_STOP, 2))
             .apply {
