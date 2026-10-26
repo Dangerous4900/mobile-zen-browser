@@ -67,6 +67,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPicture
+import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.PushPin
@@ -1998,7 +1999,7 @@ private fun SidebarBottomFooterBar(
                     ) {
                         Surface(
                             shape = CircleShape,
-                            color = Color(0xFF27272A),
+                            color = if (mediaPlaybackState.isMuted) Color(0xFF3B1D1D) else Color(0xFF27272A),
                             modifier = Modifier
                                 .size(26.dp)
                                 .clickable { onToggleMediaMute() }
@@ -2006,8 +2007,8 @@ private fun SidebarBottomFooterBar(
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = Icons.Default.MusicNote,
-                                    contentDescription = "Mute or Unmute Media",
+                                    imageVector = if (mediaPlaybackState.isMuted) Icons.Default.VolumeOff else Icons.Default.MusicNote,
+                                    contentDescription = if (mediaPlaybackState.isMuted) "Unmute media" else "Mute media",
                                     tint = Color(0xFFF4F4F6),
                                     modifier = Modifier.size(14.dp)
                                 )

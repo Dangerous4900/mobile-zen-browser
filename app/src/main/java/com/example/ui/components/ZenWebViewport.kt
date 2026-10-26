@@ -339,83 +339,59 @@ class ZenWebViewController {
             """
             (function() {
                 window.__zenBypassPauseBlock = true;
-                var mediaElements = document.querySelectorAll('video, audio');
-                var anyPlaying = false;
-                mediaElements.forEach(function(media) {
-                    if (!media.paused && !media.ended) {
-                        anyPlaying = true;
-                    }
-                });
-                mediaElements.forEach(function(media) {
-                    if (anyPlaying) {
-                        media.pause();
-                        media.currentTime = 0;
-                        try {
-                            if (media.srcObject) {
-                                var tracks = media.srcObject.getTracks();
-                                tracks.forEach(function(t) { t.stop(); });
-                            }
-                        } catch(e) {}
+                var els = Array.prototype.slice.call(document.querySelectorAll('video, audio'));
+                var playing = els.filter(function(m) { return !m.paused && !m.ended; });
+                if (els.length) {
+                    if (playing.length) {
+                        playing.forEach(function(m) { m.pause(); });
+                        window.__zenPausedByUs = playing;
                     } else {
-                        media.play();
+                        var resume = (window.__zenPausedByUs && window.__zenPausedByUs.length) ? window.__zenPausedByUs : els.slice(0, 1);
+                        resume.forEach(function(m) { try { var p = m.play(); if (p && p.catch) p.catch(function(){}); } catch(e) {} });
+                        window.__zenPausedByUs = [];
                     }
-                });
-                var playBtn = document.querySelector('.ytp-play-button, [aria-label="Play"], [aria-label="Pause"], button.play, button.pause');
-                if (playBtn) {
-                    playBtn.click();
+                } else {
+                    var btn = document.querySelector('.ytp-play-button, button[aria-label="Play"], button[aria-label="Pause"]');
+                    if (btn) btn.click();
                 }
-                setTimeout(function() { window.__zenBypassPauseBlock = false; }, 300);
+                setTimeout(function() { window.__zenBypassPauseBlock = false; }, 400);
             })();
             """.trimIndent(),
             null
         )
     }
 
-    fun toggleMediaMute() {
-        isMuted = !isMuted
+    /** Mutes/unmutes every media element and Web Audio context on the page (never clicks site buttons). */
+    fun setMediaMuted(muted: Boolean) {
+        isMuted = muted
+        webView?.evaluateJavascript("window.__zenApplyMute && window.__zenApplyMute($muted);", null)
+    }
+
+    /** Re-applies the remembered mute state after navigation (the page JS flag is lost on load). */
+    fun reapplyMuteState() {
+        if (isMuted) setMediaMuted(true)
+    }
+
+    /** Stretches the playing video over the viewport while in the tiny PiP window. */
+    fun setPipVideoMode(enabled: Boolean) {
         webView?.evaluateJavascript(
             """
             (function() {
-                window.__zenIsMuted = ${isMuted};
-                var mediaElements = document.querySelectorAll('video, audio');
-                mediaElements.forEach(function(media) {
-                    media.muted = window.__zenIsMuted;
-                    if (window.__zenIsMuted) {
-                        media._prevVolume = media.volume;
-                        media.volume = 0;
-                    } else {
-                        media.volume = media._prevVolume !== undefined ? media._prevVolume : 1;
-                    }
-                });
-                if (window.__zenAudioContexts) {
-                    window.__zenAudioContexts.forEach(function(ctx) {
-                        if (window.__zenIsMuted) {
-                            if (ctx.state === 'running') ctx.suspend();
-                        } else {
-                            if (ctx.state === 'suspended') ctx.resume();
-                        }
-                    });
-                }
-                if (!window.__zenAudioContextHooked) {
-                    window.__zenAudioContextHooked = true;
-                    window.__zenAudioContexts = [];
-                    var origAudioCtx = window.AudioContext || window.webkitAudioContext;
-                    if (origAudioCtx) {
-                        window.AudioContext = function() {
-                            var ctx = new origAudioCtx();
-                            window.__zenAudioContexts.push(ctx);
-                            if (window.__zenIsMuted && ctx.state === 'running') {
-                                ctx.suspend();
-                            }
-                            return ctx;
-                        };
-                        window.AudioContext.prototype = origAudioCtx.prototype;
-                    }
-                }
-                var muteBtn = document.querySelector('.ytp-mute-button, [aria-label="Mute"], [aria-label="Unmute"], button.mute');
-                if (muteBtn) {
-                    muteBtn.click();
-                }
+                var id = '__zen_pip_style';
+                var old = document.getElementById(id);
+                if (old) old.remove();
+                document.querySelectorAll('[data-zen-pip]').forEach(function(e) { e.removeAttribute('data-zen-pip'); });
+                if (!$enabled) return;
+                var vids = Array.prototype.slice.call(document.querySelectorAll('video'));
+                var v = vids.filter(function(x) { return !x.paused; })[0] || vids.sort(function(a, b) { return b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight; })[0];
+                if (!v) return;
+                v.setAttribute('data-zen-pip', '1');
+                var st = document.createElement('style');
+                st.id = id;
+                st.textContent = 'html,body{background:#000!important;overflow:hidden!important}' +
+                    'video[data-zen-pip]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+                    'max-width:none!important;max-height:none!important;object-fit:contain!important;z-index:2147483647!important;background:#000!important}';
+                document.documentElement.appendChild(st);
             })();
             """.trimIndent(),
             null
@@ -428,7 +404,7 @@ class ZenWebViewController {
             """
             (function() {
                 window.__zenBypassPauseBlock = true;
-                window.__zenIsMuted = false;
+                window.__zenApplyMute && window.__zenApplyMute(false);
                 var mediaElements = document.querySelectorAll('video, audio');
                 mediaElements.forEach(function(media) {
                     media.muted = false;
@@ -755,12 +731,21 @@ fun ZenWebPaneView(
                 isFocusableInTouchMode = true
                 isScrollbarFadingEnabled = true
                 overScrollMode = android.view.View.OVER_SCROLL_ALWAYS
+                var pendingScrollKey = ""
+                var pendingScrollY = 0
+                val persistScrollRunnable = Runnable {
+                    if (pendingScrollKey.isNotEmpty()) scrollPrefs.edit().putInt(pendingScrollKey, pendingScrollY).apply()
+                }
                 setOnScrollChangeListener { _, _, _, scrollY, _ ->
                     val url = this.url ?: tab.url
                     if (url.isNotBlank() && scrollY > 0) {
                         scrollPositionsByUrl[url] = scrollY
                         scrollPositionsByUrl[url.substringBefore('#').trimEnd('/')] = scrollY
-                        scrollPrefs.edit().putInt("scroll_" + url.hashCode(), scrollY).apply()
+                        // Debounced: writing SharedPreferences on every scroll frame is wasteful.
+                        removeCallbacks(persistScrollRunnable)
+                        pendingScrollKey = "scroll_" + url.hashCode()
+                        pendingScrollY = scrollY
+                        postDelayed(persistScrollRunnable, 400)
                     }
                 }
                 setOnTouchListener { v, event ->
@@ -900,6 +885,7 @@ fun ZenWebPaneView(
             val blockCookies = privacyCfg.blockThirdPartyCookies || privacyCfg.adBlockerLevel == com.example.data.AdBlockerLevel.HIGH
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, !blockCookies)
 
+            val webViewSelf = this
             addJavascriptInterface(
                 object {
                     @JavascriptInterface
@@ -933,6 +919,9 @@ fun ZenWebPaneView(
                     @JavascriptInterface
                     fun onSavePassword(domain: String, pageUrl: String, user: String, pass: String) {
                         post {
+                            // Never trust the page-supplied domain: use the real host of the WebView's current URL.
+                            val realHost = try { android.net.Uri.parse(webViewSelf.url ?: "").host?.lowercase() } catch (e: Exception) { null }
+                            if (realHost.isNullOrBlank() || !domain.equals(realHost, ignoreCase = true)) return@post
                             if (domain.isNotBlank() && pass.isNotBlank()) {
                                 detectedSavePassword = PasswordEntity(
                                     id = "pwd_${java.util.UUID.randomUUID().toString().take(8)}",
@@ -1139,9 +1128,49 @@ fun ZenWebPaneView(
                     };
                 } catch(e) {}
 
+                // ---- Mute machinery (installed at page load so late-created media/AudioContexts are covered) ----
+                window.__zenIsMuted = false;
+                window.__zenAudioContexts = window.__zenAudioContexts || [];
+                try {
+                    ['AudioContext', 'webkitAudioContext'].forEach(function(name) {
+                        var Orig = window[name];
+                        if (!Orig || Orig.__zenWrapped) return;
+                        var Wrapped = function() {
+                            var ctx = new (Function.prototype.bind.apply(Orig, [null].concat(Array.prototype.slice.call(arguments))))();
+                            window.__zenAudioContexts.push(ctx);
+                            if (window.__zenIsMuted) { try { ctx.suspend(); } catch(e) {} }
+                            return ctx;
+                        };
+                        Wrapped.prototype = Orig.prototype;
+                        Wrapped.__zenWrapped = true;
+                        window[name] = Wrapped;
+                    });
+                } catch(e) {}
+                function applyMuteToMedia(root) {
+                    root.querySelectorAll('video, audio').forEach(function(m) {
+                        if (m.muted !== window.__zenIsMuted) m.muted = window.__zenIsMuted;
+                    });
+                }
+                window.__zenApplyMute = function(muted) {
+                    window.__zenIsMuted = !!muted;
+                    applyMuteToMedia(document);
+                    window.__zenAudioContexts.forEach(function(ctx) {
+                        try { muted ? ctx.suspend() : ctx.resume(); } catch(e) {}
+                    });
+                };
+                ['play', 'playing', 'volumechange', 'loadedmetadata'].forEach(function(ev) {
+                    document.addEventListener(ev, function(e) {
+                        var t = e.target;
+                        if (t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO') && t.muted !== window.__zenIsMuted && window.__zenIsMuted) {
+                            t.muted = true;
+                        }
+                    }, true);
+                });
+
                 function checkAndUpdateMediaState() {
                     var allMedia = document.querySelectorAll('video, audio');
                     var isPlaying = false;
+                    if (window.__zenIsMuted) applyMuteToMedia(document);
                     allMedia.forEach(function(m) {
                         if (!m.hasAttribute('playsinline')) m.setAttribute('playsinline', '');
                         if (!m.hasAttribute('webkit-playsinline')) m.setAttribute('webkit-playsinline', '');
@@ -1154,7 +1183,7 @@ fun ZenWebPaneView(
                     }
                 }
 
-                setInterval(checkAndUpdateMediaState, 1000);
+                setInterval(checkAndUpdateMediaState, 2000);
 
                 document.addEventListener('loadedmetadata', function(e) {
                     if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
@@ -1163,7 +1192,6 @@ fun ZenWebPaneView(
                 }, true);
                 document.addEventListener('play', checkAndUpdateMediaState, true);
                 document.addEventListener('pause', checkAndUpdateMediaState, true);
-                document.addEventListener('timeupdate', checkAndUpdateMediaState, true);
             }
 
             if (location.hostname.indexOf('addons.mozilla.org') !== -1 && !window.__zenAmoHooked) {
@@ -1419,6 +1447,9 @@ fun ZenWebPaneView(
 
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
+                            if (controller.isMuted) {
+                                view?.evaluateJavascript("window.__zenApplyMute && window.__zenApplyMute(true);", null)
+                            }
                             // Only reset pull-to-refresh if the user is NOT actively holding the pull gesture
                             if (!isPullingGestureActive) {
                                 isPullRefreshing = false
@@ -1477,8 +1508,10 @@ fun ZenWebPaneView(
 
                             if (currentUrl.startsWith("http://") || currentUrl.startsWith("https://")) {
                                 val currentDomain = ZenPrivacyEngine.extractHostDisplay(currentUrl)
+                                val pageHost = try { android.net.Uri.parse(currentUrl).host?.lowercase() } catch (e: Exception) { null }
                                 val matchingPassword = currentUiState.savedPasswords.find {
-                                    it.domain.equals(currentDomain, ignoreCase = true) || currentUrl.contains(it.domain, ignoreCase = true)
+                                    val d = it.domain.lowercase()
+                                    pageHost != null && (pageHost == d || pageHost.endsWith(".$d") || it.domain.equals(currentDomain, ignoreCase = true))
                                 }
                                 if (matchingPassword != null) {
                                     detectedAutofillPassword = matchingPassword
@@ -1966,20 +1999,20 @@ fun ZenWebPaneView(
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = {
-                                val cleanPass = pwd.password.replace("'", "\\'")
-                                val cleanUser = pwd.username.replace("'", "\\'")
+                                val cleanPass = org.json.JSONObject.quote(pwd.password)
+                                val cleanUser = org.json.JSONObject.quote(pwd.username)
                                 webView.evaluateJavascript(
                                     """
                                     (function() {
                                         var passInput = document.querySelector('input[type="password"]');
                                         if (passInput) {
-                                            passInput.value = '$cleanPass';
+                                            passInput.value = $cleanPass;
                                             passInput.dispatchEvent(new Event('input', { bubbles: true }));
                                             passInput.dispatchEvent(new Event('change', { bubbles: true }));
                                             var form = passInput.form || document;
                                             var userInput = form.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="login"]');
                                             if (userInput) {
-                                                userInput.value = '$cleanUser';
+                                                userInput.value = $cleanUser;
                                                 userInput.dispatchEvent(new Event('input', { bubbles: true }));
                                                 userInput.dispatchEvent(new Event('change', { bubbles: true }));
                                             }

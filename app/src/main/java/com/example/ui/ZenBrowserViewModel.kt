@@ -1314,12 +1314,18 @@ class ZenBrowserViewModel(
                 mediaPlaybackState = MediaPlaybackState(
                     isActive = isActive,
                     isPlaying = isPlaying,
+                    // Mute is user intent: keep it while the same tab keeps reporting media.
+                    isMuted = it.mediaPlaybackState.isMuted && it.mediaPlaybackState.tabId == tabId,
                     title = title.ifBlank { domain },
                     domain = domain,
                     tabId = tabId
                 )
             )
         }
+    }
+
+    fun setMediaMuted(muted: Boolean) {
+        sessionState.update { it.copy(mediaPlaybackState = it.mediaPlaybackState.copy(isMuted = muted)) }
     }
 
     fun dismissMediaPlaybackBar() {
@@ -1329,6 +1335,7 @@ class ZenBrowserViewModel(
     }
 
     fun setPictureInPictureMode(inPip: Boolean) {
+        if (sessionState.value.isInPictureInPictureMode == inPip) return
         sessionState.update {
             it.copy(
                 isInPictureInPictureMode = inPip,

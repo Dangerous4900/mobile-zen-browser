@@ -71,15 +71,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            LaunchedEffect(uiState.mediaPlaybackState.isPlaying, uiState.mediaPlaybackState.isActive, uiState.sidebarConfig.playInWindowPipEnabled) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val isPlaying = uiState.mediaPlaybackState.isPlaying || uiState.mediaPlaybackState.isActive
-                    val pipEnabled = uiState.sidebarConfig.playInWindowPipEnabled
-                    val params = PictureInPictureParams.Builder()
-                        .setAspectRatio(Rational(16, 9))
-                        .setAutoEnterEnabled(isPlaying && pipEnabled)
-                        .build()
-                    setPictureInPictureParams(params)
+            LaunchedEffect(uiState.mediaPlaybackState.isPlaying, uiState.sidebarConfig.playInWindowPipEnabled) {
+                if (canUsePip()) {
+                    val auto = uiState.mediaPlaybackState.isPlaying && uiState.sidebarConfig.playInWindowPipEnabled
+                    setPictureInPictureParams(buildPipParams(autoEnter = auto))
                 }
             }
 
@@ -97,47 +92,48 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        enterPipIfPlaying()
+        // On Android 12+ setAutoEnterEnabled handles this; entering twice makes PiP flicker.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) enterPipIfPlaying()
+    }
+
+    private fun canUsePip(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+    private fun buildPipParams(autoEnter: Boolean): PictureInPictureParams {
+        return PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setAutoEnterEnabled(autoEnter)
+                    setSeamlessResizeEnabled(true)
+                }
+            }
+            .build()
     }
 
     private fun enterPipIfPlaying(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val state = viewModelRef?.uiState?.value
-            val isPlaying = state?.mediaPlaybackState?.isPlaying == true || state?.mediaPlaybackState?.isActive == true
-            val pipEnabled = state?.sidebarConfig?.playInWindowPipEnabled ?: true
-            if (isPlaying && pipEnabled) {
-                viewModelRef?.setSidebarOpen(false)
-                viewModelRef?.setPictureInPictureMode(true)
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    val params = PictureInPictureParams.Builder()
-                        .setAspectRatio(Rational(16, 9))
-                        .apply {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                setAutoEnterEnabled(true)
-                            }
-                        }
-                        .build()
-                    enterPictureInPictureMode(params)
-                }, 50)
-                return true
-            }
-        }
-        return false
+        val state = viewModelRef?.uiState?.value ?: return false
+        val media = state.mediaPlaybackState
+        val pipEnabled = state.sidebarConfig.playInWindowPipEnabled
+        if (!(media.isPlaying && pipEnabled)) return false
+        return enterPipNow()
     }
 
-    fun enterPipManual(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            viewModelRef?.setSidebarOpen(false)
-            viewModelRef?.setPictureInPictureMode(true)
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                val params = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .build()
-                enterPictureInPictureMode(params)
-            }, 50)
-            return true
+    fun enterPipManual(): Boolean = enterPipNow()
+
+    /**
+     * Enters PiP. UI state is flipped only in onPictureInPictureModeChanged, so a refused request
+     * (PiP disabled in system settings, unsupported device) can no longer leave the UI stuck blank.
+     */
+    private fun enterPipNow(): Boolean {
+        if (!canUsePip() || isInPictureInPictureMode) return false
+        viewModelRef?.setSidebarOpen(false)
+        return try {
+            enterPictureInPictureMode(buildPipParams(autoEnter = false))
+        } catch (e: IllegalStateException) {
+            false
         }
-        return false
     }
 
     override fun onPictureInPictureModeChanged(
