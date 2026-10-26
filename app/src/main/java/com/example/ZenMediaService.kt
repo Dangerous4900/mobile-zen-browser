@@ -58,6 +58,8 @@ class ZenMediaService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_PLAY -> ZenMediaBus.onSetPlaying?.invoke(true) ?: ZenMediaBus.onPlayPause?.invoke()
+            ACTION_PAUSE -> ZenMediaBus.onSetPlaying?.invoke(false) ?: ZenMediaBus.onPlayPause?.invoke()
             ACTION_PLAY_PAUSE -> ZenMediaBus.onPlayPause?.invoke()
             ACTION_STOP -> ZenMediaBus.onStop?.invoke()
             ACTION_UPDATE -> update(
