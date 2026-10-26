@@ -152,6 +152,23 @@ fun ZenBrowserScreen(
         primaryWebController
     }
 
+    // System media controls (notification, lock screen, headset) drive the same web controllers.
+    DisposableEffect(primaryWebController, secondaryWebController) {
+        com.example.ZenMediaBus.onPlayPause = {
+            primaryWebController.toggleMediaPlayPause()
+            secondaryWebController.toggleMediaPlayPause()
+        }
+        com.example.ZenMediaBus.onStop = {
+            primaryWebController.stopAllMedia()
+            secondaryWebController.stopAllMedia()
+            viewModel.dismissMediaPlaybackBar()
+        }
+        onDispose {
+            com.example.ZenMediaBus.onPlayPause = null
+            com.example.ZenMediaBus.onStop = null
+        }
+    }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->

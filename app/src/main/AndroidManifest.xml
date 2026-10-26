@@ -40,6 +40,10 @@
                 <data android:scheme="https" />
             </intent-filter>
         </activity>
+        <service
+            android:name=".ZenMediaService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 
 </manifest>

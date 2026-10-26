@@ -97,6 +97,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // Publish playback to Android (MediaSession + foreground service) so media is detected,
+            // controllable from the shade/lock screen/headset, and survives screen-off.
+            val media = uiState.mediaPlaybackState
+            LaunchedEffect(media.isActive, media.isPlaying, media.title, media.domain, uiState.sidebarConfig.backgroundPlayEnabled) {
+                if (media.isActive && uiState.sidebarConfig.backgroundPlayEnabled) {
+                    ZenMediaService.sync(applicationContext, media.isPlaying, media.title, media.domain)
+                } else {
+                    ZenMediaService.stop(applicationContext)
+                }
+            }
+
             LaunchedEffect(uiState.mediaPlaybackState.isPlaying, uiState.sidebarConfig.playInWindowPipEnabled) {
                 if (canUsePip()) {
                     val auto = uiState.mediaPlaybackState.isPlaying && uiState.sidebarConfig.playInWindowPipEnabled
@@ -113,6 +124,15 @@ class MainActivity : ComponentActivity() {
                     onEnterPip = { enterPipManual() }
                 )
             }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Keep page JS timers + audio running when the screen turns off / app is backgrounded.
+        val media = viewModelRef?.uiState?.value?.mediaPlaybackState
+        if (media?.isActive == true && viewModelRef?.uiState?.value?.sidebarConfig?.backgroundPlayEnabled != false) {
+            com.example.ui.components.ZenWebViewManager.getAllWebViews().values.firstOrNull()?.resumeTimers()
         }
     }
 
@@ -142,6 +162,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (isFinishing) ZenMediaService.stop(applicationContext)
         super.onDestroy()
         releaseWakeLock()
     }
