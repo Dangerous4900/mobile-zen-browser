@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -44,9 +45,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Edit
@@ -63,6 +66,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.PushPin
@@ -73,10 +77,14 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Splitscreen
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -135,6 +143,7 @@ import com.example.data.SidebarSectionType
 import com.example.data.SidebarToolItem
 import com.example.data.TabEntity
 import com.example.data.TabSwipeAction
+import com.example.data.TopToolbarToolItem
 import com.example.data.UrlBarPosition
 import com.example.data.WorkspaceEntity
 import com.example.privacy.ZenPrivacyEngine
@@ -213,6 +222,7 @@ fun ZenSidebarPanel(
     onToggleBookmarkTab: (TabEntity) -> Unit,
     onToggleEssentialTab: (TabEntity) -> Unit,
     onDuplicateTab: (TabEntity) -> Unit = {},
+    onSaveTabOffline: (TabEntity) -> Unit = {},
     onMoveTabToWorkspace: (TabEntity, String) -> Unit,
     onReorderTabs: (fromTabId: String, toIndex: Int, isPinnedSection: Boolean) -> Unit,
     onMergeTabsIntoSplitView: (primaryTabId: String, secondaryTabId: String) -> Unit,
@@ -221,21 +231,34 @@ fun ZenSidebarPanel(
     onNavigateUrl: (String) -> Unit,
     onGoBack: () -> Unit,
     onGoForward: () -> Unit,
+    canGoBack: Boolean = uiState.canGoBack,
+    canGoForward: Boolean = uiState.canGoForward,
+    onGetBackHistory: () -> List<com.example.data.HistoryNavEntry> = { emptyList() },
+    onNavigateHistoryOffset: (Int) -> Unit = {},
     onReload: () -> Unit,
     onGoHome: () -> Unit,
+    onOpenGlance: () -> Unit = {},
     onClearSidebarSearchFocusRequest: () -> Unit,
     onOpenSheet: (ActiveModalSheet) -> Unit,
+    onOpenExtensions: () -> Unit = {},
     onToggleSplitView: () -> Unit,
     onToggleReaderMode: () -> Unit,
     onToggleCompactMode: () -> Unit,
+    onToggleDesktopMode: () -> Unit = {},
     onToggleMediaPlayPause: () -> Unit,
+    onToggleMediaMute: () -> Unit = {},
     onDismissMediaBar: () -> Unit,
+    onEnterPip: () -> Unit = {},
     onClearUnpinnedTabs: () -> Unit,
+    onClearAllHistory: () -> Unit = {},
+    onDeleteHistoryEntry: (String) -> Unit = {},
     viewportGraphicsLayer: androidx.compose.ui.graphics.layer.GraphicsLayer? = null,
     backdropImageBitmap: ImageBitmap? = null,
     softwareBlurredBackdrop: ImageBitmap? = null,
     modifier: Modifier = Modifier
 ) {
+    if (uiState.isInPictureInPictureMode) return
+
     val sidebarCfg = uiState.sidebarConfig
     val enabledTools = sidebarCfg.enabledSidebarTools
     val uiScale = sidebarCfg.sidebarUiScale.coerceIn(0.75f, 1.35f)
@@ -253,7 +276,6 @@ fun ZenSidebarPanel(
         )
     }
     var showEmptyAreaEditMenu by remember { mutableStateOf(false) }
-
     val sidebarSearchFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val density = scaledSidebarDensity
@@ -310,6 +332,10 @@ fun ZenSidebarPanel(
         )
     }
 
+    val currentWsIndex = remember(uiState.workspaces, uiState.activeWorkspaceId) {
+        uiState.workspaces.indexOfFirst { it.id == uiState.activeWorkspaceId }.coerceAtLeast(0)
+    }
+
     Surface(
         modifier = modifier
             .width(widthDp)
@@ -321,6 +347,37 @@ fun ZenSidebarPanel(
                 brush = panelBorderBrush,
                 shape = panelShape
             )
+            .pointerInput(uiState.workspaces, currentWsIndex) {
+                var accumulatedDragX = 0f
+                var hasTriggeredSwipe = false
+                detectHorizontalDragGestures(
+                    onDragStart = { accumulatedDragX = 0f; hasTriggeredSwipe = false },
+                    onDragEnd = { accumulatedDragX = 0f; hasTriggeredSwipe = false },
+                    onDragCancel = { accumulatedDragX = 0f; hasTriggeredSwipe = false },
+                    onHorizontalDrag = { change, dragAmount ->
+                        accumulatedDragX += dragAmount
+                        if (!hasTriggeredSwipe && kotlin.math.abs(accumulatedDragX) > 42f) {
+                            hasTriggeredSwipe = true
+                            change.consume()
+                            if (accumulatedDragX < -42f) {
+                                // Swiped Left (<-) -> Next Workspace or New Workspace
+                                if (currentWsIndex < uiState.workspaces.lastIndex) {
+                                    onSelectWorkspace(uiState.workspaces[currentWsIndex + 1].id)
+                                } else {
+                                    onOpenSheet(ActiveModalSheet.WORKSPACE_EDITOR)
+                                }
+                            } else if (accumulatedDragX > 42f) {
+                                // Swiped Right (->) -> Previous Workspace or New Workspace
+                                if (currentWsIndex > 0) {
+                                    onSelectWorkspace(uiState.workspaces[currentWsIndex - 1].id)
+                                } else {
+                                    onOpenSheet(ActiveModalSheet.WORKSPACE_EDITOR)
+                                }
+                            }
+                        }
+                    }
+                )
+            }
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -501,87 +558,254 @@ fun ZenSidebarPanel(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(
-                                onClick = onGoBack,
-                                enabled = uiState.canGoBack,
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .testTag("sidebar_nav_back_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Back",
-                                    tint = if (uiState.canGoBack) Color(0xFFF4F4F6) else Color(0xFF52525B),
-                                    modifier = Modifier.size(17.dp)
-                                )
-                            }
-                            IconButton(
-                                onClick = onGoForward,
-                                enabled = uiState.canGoForward,
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .testTag("sidebar_nav_forward_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = "Forward",
-                                    tint = if (uiState.canGoForward) Color(0xFFF4F4F6) else Color(0xFF52525B),
-                                    modifier = Modifier.size(17.dp)
-                                )
-                            }
-                            IconButton(
-                                onClick = onReload,
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .testTag("sidebar_nav_reload_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Reload",
-                                    tint = Color(0xFFD4D4D8),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                            IconButton(
-                                onClick = onGoHome,
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .testTag("sidebar_nav_home_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Home,
-                                    contentDescription = "Home Page",
-                                    tint = Color(0xFFD4D4D8),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                            IconButton(
-                                onClick = { onOpenSheet(ActiveModalSheet.LIBRARY) },
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .testTag("sidebar_library_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FolderSpecial,
-                                    contentDescription = "Bookmarks, History & Downloads",
-                                    tint = Color(0xFFF4F4F6),
-                                    modifier = Modifier.size(16.dp)
-                                )
+                            sidebarCfg.enabledTopToolbarTools.forEach { tool ->
+                                when (tool) {
+                                    TopToolbarToolItem.BACK -> {
+                                        var showBackHistoryMenu by remember { mutableStateOf(false) }
+                                        var backHistoryItems by remember { mutableStateOf<List<com.example.data.HistoryNavEntry>>(emptyList()) }
+
+                                        Box {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .combinedClickable(
+                                                        enabled = canGoBack,
+                                                        onClick = onGoBack,
+                                                        onLongClick = {
+                                                            val items = onGetBackHistory()
+                                                            if (items.isNotEmpty()) {
+                                                                backHistoryItems = items
+                                                                showBackHistoryMenu = true
+                                                            }
+                                                        }
+                                                    )
+                                                    .testTag("sidebar_nav_back_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                                    contentDescription = "Back (Hold for previous pages)",
+                                                    tint = if (canGoBack) Color(0xFFF4F4F6) else Color(0xFF52525B),
+                                                    modifier = Modifier.size(17.dp)
+                                                )
+                                            }
+
+                                            DropdownMenu(
+                                                expanded = showBackHistoryMenu,
+                                                onDismissRequest = { showBackHistoryMenu = false },
+                                                modifier = Modifier
+                                                    .background(Color(0xFF18181B))
+                                                    .testTag("back_history_dropdown_menu")
+                                            ) {
+                                                Text(
+                                                    text = "Previous Pages",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color(0xFFA1A1AA),
+                                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                                )
+                                                HorizontalDivider(color = Color(0xFF27272A))
+                                                backHistoryItems.forEach { entry ->
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Column(modifier = Modifier.padding(vertical = 2.dp)) {
+                                                                Text(
+                                                                    text = entry.title,
+                                                                    style = MaterialTheme.typography.bodyMedium,
+                                                                    color = Color(0xFFF4F4F6),
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis
+                                                                )
+                                                                if (entry.url.isNotBlank()) {
+                                                                    Text(
+                                                                        text = entry.url,
+                                                                        style = MaterialTheme.typography.bodySmall,
+                                                                        color = Color(0xFF71717A),
+                                                                        maxLines = 1,
+                                                                        overflow = TextOverflow.Ellipsis
+                                                                    )
+                                                                }
+                                                            }
+                                                        },
+                                                        onClick = {
+                                                            showBackHistoryMenu = false
+                                                            onNavigateHistoryOffset(-entry.stepsBack)
+                                                        },
+                                                        modifier = Modifier.testTag("back_history_entry_${entry.stepsBack}")
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                    TopToolbarToolItem.FORWARD -> {
+                                        IconButton(
+                                            onClick = onGoForward,
+                                            enabled = canGoForward,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("sidebar_nav_forward_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                                contentDescription = "Forward",
+                                                tint = if (canGoForward) Color(0xFFF4F4F6) else Color(0xFF52525B),
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                        }
+                                    }
+                                    TopToolbarToolItem.RELOAD -> {
+                                        IconButton(
+                                            onClick = onReload,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("sidebar_nav_reload_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Refresh,
+                                                contentDescription = "Reload",
+                                                tint = Color(0xFFD4D4D8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    TopToolbarToolItem.HOME -> {
+                                        IconButton(
+                                            onClick = onGoHome,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("sidebar_nav_home_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Home,
+                                                contentDescription = "Home Page",
+                                                tint = Color(0xFFD4D4D8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    TopToolbarToolItem.AT_A_GLANCE -> {
+                                        IconButton(
+                                            onClick = onOpenGlance,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("sidebar_nav_glance_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Visibility,
+                                                contentDescription = "At a Glance",
+                                                tint = Color(0xFF8AB4F8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    TopToolbarToolItem.TRANSLATE -> {
+                                        IconButton(
+                                            onClick = { onOpenSheet(ActiveModalSheet.FIREFOX_EXTENSIONS) },
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("sidebar_nav_translate_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Translate,
+                                                contentDescription = "Translate",
+                                                tint = Color(0xFF34D399),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    TopToolbarToolItem.READER_MODE -> {
+                                        IconButton(
+                                            onClick = onToggleReaderMode,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("sidebar_nav_reader_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.MenuBook,
+                                                contentDescription = "Reader Mode",
+                                                tint = if (uiState.isReaderModeEnabled) Color(0xFF8AB4F8) else Color(0xFFD4D4D8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    TopToolbarToolItem.EXTENSIONS -> {
+                                        IconButton(
+                                            onClick = onOpenExtensions,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("sidebar_nav_extensions_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Extension,
+                                                contentDescription = "Extensions",
+                                                tint = Color(0xFFD4D4D8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    TopToolbarToolItem.PRIVACY_SHIELD -> {
+                                        IconButton(
+                                            onClick = { onOpenSheet(ActiveModalSheet.PRIVACY_SHIELD) },
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("sidebar_nav_shield_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Shield,
+                                                contentDescription = "Privacy Shield",
+                                                tint = Color(0xFFD4D4D8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    TopToolbarToolItem.DESKTOP_MODE -> {
+                                        IconButton(
+                                            onClick = onToggleDesktopMode,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("sidebar_nav_desktop_mode_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.DesktopWindows,
+                                                contentDescription = "Desktop Site",
+                                                tint = if (uiState.isFocusedTabDesktopMode) Color(0xFF60A5FA) else Color(0xFFD4D4D8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                    TopToolbarToolItem.EDIT_LAYOUT -> {
+                                        IconButton(
+                                            onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
+                                            modifier = Modifier
+                                                .size(30.dp)
+                                                .testTag("sidebar_edit_layout_top_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit Side Panel",
+                                                tint = Color(0xFFA1A1AA),
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
 
-                        IconButton(
-                            onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
-                            modifier = Modifier
-                                .size(30.dp)
-                                .testTag("sidebar_edit_layout_top_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = "Edit Side Panel",
-                                tint = Color(0xFFA1A1AA),
-                                modifier = Modifier.size(14.dp)
-                            )
+                        if (!sidebarCfg.enabledTopToolbarTools.contains(TopToolbarToolItem.EDIT_LAYOUT)) {
+                            IconButton(
+                                onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .testTag("sidebar_edit_layout_top_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Side Panel",
+                                    tint = Color(0xFFA1A1AA),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -775,7 +999,8 @@ fun ZenSidebarPanel(
                                             onToggleBookmarkTab = onToggleBookmarkTab,
                                             onToggleEssentialTab = onToggleEssentialTab,
                                             onDuplicateTab = onDuplicateTab,
-                                            onMoveTabToWorkspace = onMoveTabToWorkspace
+                                            onMoveTabToWorkspace = onMoveTabToWorkspace,
+                                            onSaveTabOffline = onSaveTabOffline
                                         )
                                     }
                                 }
@@ -817,6 +1042,7 @@ fun ZenSidebarPanel(
                                             onToggleBookmark = { onToggleBookmarkTab(tab) },
                                             onToggleEssential = { onToggleEssentialTab(tab) },
                                             onMoveToWorkspace = { targetWsId -> onMoveTabToWorkspace(tab, targetWsId) },
+                                            onSaveOffline = { onSaveTabOffline(tab) },
                                             onStartDrag = {
                                                 draggingTabId = tab.id
                                                 draggingTabStartIndex = index
@@ -917,6 +1143,7 @@ fun ZenSidebarPanel(
                                         onToggleBookmark = { onToggleBookmarkTab(tab) },
                                         onToggleEssential = { onToggleEssentialTab(tab) },
                                         onMoveToWorkspace = { targetWsId -> onMoveTabToWorkspace(tab, targetWsId) },
+                                        onSaveOffline = { onSaveTabOffline(tab) },
                                         onStartDrag = {
                                             draggingTabId = tab.id
                                             draggingTabStartIndex = index
@@ -1016,7 +1243,9 @@ fun ZenSidebarPanel(
                     onOpenPrivacy = { onOpenSheet(ActiveModalSheet.PRIVACY_SHIELD) },
                     onToggleReader = onToggleReaderMode,
                     onToggleCompact = onToggleCompactMode,
-                    onOpenExtensions = { onOpenSheet(ActiveModalSheet.FIREFOX_EXTENSIONS) },
+                    isDesktopMode = uiState.isFocusedTabDesktopMode,
+                    onToggleDesktopMode = onToggleDesktopMode,
+                    onOpenExtensions = onOpenExtensions,
                     onOpenLibrary = { onOpenSheet(ActiveModalSheet.LIBRARY) },
                     onOpenStudio = { onOpenSheet(ActiveModalSheet.SIDEBAR_STUDIO) },
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
@@ -1025,7 +1254,8 @@ fun ZenSidebarPanel(
                             onSelectTab(uiState.mediaPlaybackState.tabId)
                         }
                     },
-                    onDismissMediaBar = onDismissMediaBar
+                    onDismissMediaBar = onDismissMediaBar,
+                    onEnterPip = onEnterPip
                 )
             }
             }
@@ -1058,7 +1288,8 @@ private fun EssentialTabsGridSection(
     onToggleBookmarkTab: (TabEntity) -> Unit,
     onToggleEssentialTab: (TabEntity) -> Unit,
     onDuplicateTab: (TabEntity) -> Unit = {},
-    onMoveTabToWorkspace: (TabEntity, String) -> Unit
+    onMoveTabToWorkspace: (TabEntity, String) -> Unit,
+    onSaveTabOffline: (TabEntity) -> Unit = {}
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
@@ -1172,7 +1403,8 @@ private fun EssentialTabsGridSection(
                             onToggleBookmark = { onToggleBookmarkTab(tab) },
                             onToggleEssential = { onToggleEssentialTab(tab) },
                             onTogglePin = { onTogglePinTab(tab) },
-                            onMoveToWorkspace = { wsId -> onMoveTabToWorkspace(tab, wsId) }
+                            onMoveToWorkspace = { wsId -> onMoveTabToWorkspace(tab, wsId) },
+                            onSaveOffline = { onSaveTabOffline(tab) }
                         )
                     }
                 }
@@ -1330,6 +1562,7 @@ private fun SwipeableVerticalTabRow(
     onToggleBookmark: () -> Unit,
     onToggleEssential: () -> Unit,
     onMoveToWorkspace: (String) -> Unit,
+    onSaveOffline: () -> Unit = {},
     onStartDrag: () -> Unit,
     onDragDeltaY: (Float) -> Unit,
     onEndDrag: () -> Unit
@@ -1531,7 +1764,8 @@ private fun SwipeableVerticalTabRow(
             onToggleBookmark = onToggleBookmark,
             onToggleEssential = onToggleEssential,
             onTogglePin = onTogglePin,
-            onMoveToWorkspace = onMoveToWorkspace
+            onMoveToWorkspace = onMoveToWorkspace,
+            onSaveOffline = onSaveOffline
         )
     }
 }
@@ -1548,7 +1782,8 @@ private fun TabContextMenu(
     onToggleBookmark: () -> Unit,
     onToggleEssential: () -> Unit,
     onTogglePin: () -> Unit,
-    onMoveToWorkspace: (String) -> Unit
+    onMoveToWorkspace: (String) -> Unit,
+    onSaveOffline: () -> Unit = {}
 ) {
     var showWorkspaceSubMenu by remember { mutableStateOf(false) }
 
@@ -1572,6 +1807,20 @@ private fun TabContextMenu(
                 },
                 onClick = {
                     onDuplicate()
+                    onDismiss()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Save Page for Offline") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.CloudOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp)
+                    )
+                },
+                onClick = {
+                    onSaveOffline()
                     onDismiss()
                 }
             )
@@ -1704,12 +1953,16 @@ private fun SidebarBottomFooterBar(
     onOpenPrivacy: () -> Unit,
     onToggleReader: () -> Unit,
     onToggleCompact: () -> Unit,
+    isDesktopMode: Boolean = false,
+    onToggleDesktopMode: () -> Unit = {},
     onOpenExtensions: () -> Unit,
     onOpenLibrary: () -> Unit = {},
     onOpenStudio: () -> Unit,
     onToggleMediaPlayPause: () -> Unit,
+    onToggleMediaMute: () -> Unit = {},
     onSelectMediaTab: () -> Unit,
-    onDismissMediaBar: () -> Unit
+    onDismissMediaBar: () -> Unit,
+    onEnterPip: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1721,20 +1974,21 @@ private fun SidebarBottomFooterBar(
         ) {
             Surface(
                 onClick = onSelectMediaTab,
-                shape = RoundedCornerShape(8.dp),
-                color = if (isLiquidGlass) Color.White.copy(alpha = 0.14f) else Color(0xFF141418),
+                shape = RoundedCornerShape(50),
+                color = if (isLiquidGlass) Color.White.copy(alpha = 0.16f) else Color(0xFF18181C),
                 border = BorderStroke(
                     1.dp,
-                    if (isLiquidGlass) Color.White.copy(alpha = 0.28f) else Color(0xFF2E2E34)
+                    if (isLiquidGlass) Color.White.copy(alpha = 0.32f) else Color(0xFF2E2E36)
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
                     .testTag("sidebar_media_playback_bar")
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -1742,13 +1996,24 @@ private fun SidebarBottomFooterBar(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.MusicNote,
-                            contentDescription = "Media Playing",
-                            tint = Color(0xFFF4F4F6),
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFF27272A),
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clickable { onToggleMediaMute() }
+                                .testTag("sidebar_media_mute_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.MusicNote,
+                                    contentDescription = "Mute or Unmute Media",
+                                    tint = Color(0xFFF4F4F6),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
                                 text = mediaPlaybackState.title.ifBlank { "Playing Media" },
@@ -1769,32 +2034,63 @@ private fun SidebarBottomFooterBar(
                         }
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = onToggleMediaPlayPause,
-                            modifier = Modifier
-                                .size(28.dp)
-                                .testTag("sidebar_media_play_pause_button")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = 0.1f)
                         ) {
-                            Icon(
-                                imageVector = if (mediaPlaybackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (mediaPlaybackState.isPlaying) "Pause" else "Play",
-                                tint = Color(0xFFF4F4F6),
-                                modifier = Modifier.size(16.dp)
-                            )
+                            IconButton(
+                                onClick = onEnterPip,
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .testTag("sidebar_media_pip_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PictureInPicture,
+                                    contentDescription = "Play in window",
+                                    tint = Color(0xFFF4F4F6),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
                         }
-                        IconButton(
-                            onClick = onDismissMediaBar,
-                            modifier = Modifier
-                                .size(24.dp)
-                                .testTag("sidebar_media_close_button")
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = 0.12f)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Stop Media Bar",
-                                tint = Color(0xFFA1A1AA),
-                                modifier = Modifier.size(13.dp)
-                            )
+                            IconButton(
+                                onClick = onToggleMediaPlayPause,
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .testTag("sidebar_media_play_pause_button")
+                            ) {
+                                Icon(
+                                    imageVector = if (mediaPlaybackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (mediaPlaybackState.isPlaying) "Pause" else "Play",
+                                    tint = Color(0xFFF4F4F6),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = 0.06f)
+                        ) {
+                            IconButton(
+                                onClick = onDismissMediaBar,
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .testTag("sidebar_media_close_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Stop Media Bar",
+                                    tint = Color(0xFFA1A1AA),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1867,6 +2163,15 @@ private fun SidebarBottomFooterBar(
                                 active = false,
                                 onClick = onOpenLibrary,
                                 testTag = "quick_tool_library"
+                            )
+                        }
+                        SidebarToolItem.DESKTOP_MODE -> {
+                            ToolbarIconToggle(
+                                icon = Icons.Default.DesktopWindows,
+                                label = "Desktop",
+                                active = isDesktopMode,
+                                onClick = onToggleDesktopMode,
+                                testTag = "quick_tool_desktop_mode"
                             )
                         }
                         SidebarToolItem.SETTINGS_BUTTON -> {

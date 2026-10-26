@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,13 +27,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Extension
@@ -40,14 +48,19 @@ import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.OpenInBrowser
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
+import com.example.data.PasswordEntity
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Splitscreen
 import androidx.compose.material.icons.filled.Star
@@ -64,6 +77,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -72,6 +88,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,12 +106,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.BackSwipeSidebarMode
 import com.example.data.DownloadItemEntity
 import com.example.data.FirefoxExtensionEntity
+import com.example.data.HistoryDeletionInterval
 import com.example.data.HistoryEntryEntity
+import com.example.data.OfflinePageEntity
 import com.example.data.HomeScreenStyle
+import com.example.data.HorizontalSwipeNavigationMode
+import com.example.data.NewTabPosition
 import com.example.data.NewTabSwipeGestureAction
 import com.example.data.SearchEngine
 import com.example.data.SidebarColorMode
@@ -107,6 +129,7 @@ import com.example.data.StartPageGradientPreset
 import com.example.data.StartupBehavior
 import com.example.data.TabEntity
 import com.example.data.TabSwipeAction
+import com.example.data.TopToolbarToolItem
 import com.example.data.UrlBarPosition
 import com.example.data.WorkspaceEntity
 import com.example.data.ZenModEntity
@@ -254,7 +277,8 @@ fun SidebarCustomizationStudioSheet(
         widthDp: Float?,
         lengthDp: Float?,
         verticalOffsetFraction: Float?,
-        hideInCompactMode: Boolean?
+        hideInCompactMode: Boolean?,
+        hideAlways: Boolean?
     ) -> Unit,
     onToggleOption: (
         compactAutoHide: Boolean?,
@@ -266,11 +290,41 @@ fun SidebarCustomizationStudioSheet(
         glassIntensity: Float?
     ) -> Unit,
     onMoveSection: (SidebarSectionType, Int) -> Unit,
-    onUpdateWorkspaceTheme: (WorkspaceEntity, String) -> Unit,
+    onUpdateWorkspaceTheme: (WorkspaceEntity, String) -> Unit = { _, _ -> },
+    onUpdateOpenLinksInGlanceAutomatically: (Boolean) -> Unit = {},
+    onUpdateOpenInNewTab: (Boolean) -> Unit = {},
+    onUpdateOpenHistoryInNewTab: (Boolean) -> Unit = {},
+    onUpdateSwitchToNewTabImmediately: (Boolean) -> Unit = {},
+    onUpdateNewTabPosition: (NewTabPosition) -> Unit = {},
+    onUpdateNotificationSettings: (showTabCloseNotification: Boolean?, showActionNotifications: Boolean?) -> Unit = { _, _ -> },
+    onUpdateFakeSearchConfig: (overviewText: String?, trigger: String?, headline: String?, snippet: String?) -> Unit = { _, _, _, _ -> },
+    onOpenFakeSearch: (String) -> Unit = {},
+    onUpdateHistoryDeletionInterval: (HistoryDeletionInterval) -> Unit = {},
+    onToggleTopToolItem: (TopToolbarToolItem, Boolean) -> Unit = { _, _ -> },
+    onMoveTopToolItem: (TopToolbarToolItem, Int) -> Unit = { _, _ -> },
+    onUpdateHorizontalSwipeMode: (HorizontalSwipeNavigationMode) -> Unit = {},
     onResetDefaults: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val cfg = uiState.sidebarConfig
+    var settingsSearchQuery by remember { mutableStateOf("") }
+
+    var localBlur by remember(cfg.glassBlurIntensity) { mutableFloatStateOf(cfg.glassBlurIntensity) }
+    var localOpacity by remember(cfg.sidebarOpacity) { mutableFloatStateOf(cfg.sidebarOpacity) }
+    var localEdgeWidth by remember(cfg.edgeBarWidthDp) { mutableFloatStateOf(cfg.edgeBarWidthDp) }
+    var localEdgeLength by remember(cfg.edgeBarLengthDp) { mutableFloatStateOf(cfg.edgeBarLengthDp) }
+    var localEdgeOffset by remember(cfg.edgeBarVerticalOffsetFraction) { mutableFloatStateOf(cfg.edgeBarVerticalOffsetFraction) }
+
+    var localAiOverviewText by remember(cfg.customAiOverviewText) { mutableStateOf(cfg.customAiOverviewText) }
+    var localFakeTrigger by remember(cfg.fakeSearchQueryTrigger) { mutableStateOf(cfg.fakeSearchQueryTrigger) }
+    var localFakeHeadline by remember(cfg.fakeSearchHeadline) { mutableStateOf(cfg.fakeSearchHeadline) }
+    var localFakeSnippet by remember(cfg.fakeSearchSnippet) { mutableStateOf(cfg.fakeSearchSnippet) }
+
+    fun matchesSearch(vararg terms: String): Boolean {
+        if (settingsSearchQuery.isBlank()) return true
+        val q = settingsSearchQuery.trim().lowercase()
+        return terms.any { it.lowercase().contains(q) }
+    }
 
     val sidebarColorPalette = listOf(
         "Midnight Navy" to 0xFF162238L,
@@ -330,6 +384,69 @@ fun SidebarCustomizationStudioSheet(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "Reset Defaults"
                         )
+                    }
+                }
+            }
+
+            // Search Bar in Settings Page
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF141418),
+                    border = BorderStroke(
+                        1.dp,
+                        if (settingsSearchQuery.isNotEmpty()) Color(0xFF8AB4F8) else Color(0xFF27272A)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("settings_search_bar")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search Settings",
+                            tint = if (settingsSearchQuery.isNotEmpty()) Color(0xFF8AB4F8) else Color(0xFFA1A1AA),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = settingsSearchQuery,
+                            onValueChange = { settingsSearchQuery = it },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFF4F4F6)),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF8AB4F8)),
+                            decorationBox = { innerTextField ->
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    if (settingsSearchQuery.isEmpty()) {
+                                        Text(
+                                            text = "Search settings (blur, toolbar, gestures...)",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color(0xFF71717A)
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (settingsSearchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { settingsSearchQuery = "" },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear search",
+                                    tint = Color(0xFFA1A1AA),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -412,36 +529,39 @@ fun SidebarCustomizationStudioSheet(
             }
 
             // Side Panel Blur (Default 50%), Opacity, Liquid Glass & Side Panel Color Section
-            item {
-                SectionCard(title = "SIDE PANEL BLUR, OPACITY, LIQUID GLASS & COLOR") {
-                    Text(
-                        text = "Side Panel Blur Intensity: ${(cfg.glassBlurIntensity * 100).roundToInt()}%",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFF4F4F6)
-                    )
-                    Slider(
-                        value = cfg.glassBlurIntensity,
-                        onValueChange = {
-                            onUpdateSidebarGlassAndColor(it, null, null, null, null)
-                        },
-                        valueRange = 0f..1f,
-                        modifier = Modifier.testTag("sidebar_blur_slider")
-                    )
+            if (matchesSearch("blur", "opacity", "liquid glass", "glass", "color", "tint", "theme")) {
+                item {
+                    SectionCard(title = "SIDE PANEL BLUR, OPACITY, LIQUID GLASS & COLOR") {
+                        Text(
+                            text = "Side Panel Blur Intensity: ${(localBlur * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFF4F4F6)
+                        )
+                        Slider(
+                            value = localBlur,
+                            onValueChange = {
+                                localBlur = it
+                                onUpdateSidebarGlassAndColor(it, null, null, null, null)
+                            },
+                            valueRange = 0f..1f,
+                            modifier = Modifier.testTag("sidebar_blur_slider")
+                        )
 
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Side Panel Opacity: ${(cfg.sidebarOpacity * 100).roundToInt()}%",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFF4F4F6)
-                    )
-                    Slider(
-                        value = cfg.sidebarOpacity,
-                        onValueChange = {
-                            onUpdateSidebarGlassAndColor(null, it, null, null, null)
-                        },
-                        valueRange = 0.05f..1f,
-                        modifier = Modifier.testTag("sidebar_opacity_slider")
-                    )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Side Panel Opacity: ${(localOpacity * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFF4F4F6)
+                        )
+                        Slider(
+                            value = localOpacity,
+                            onValueChange = {
+                                localOpacity = it
+                                onUpdateSidebarGlassAndColor(null, it, null, null, null)
+                            },
+                            valueRange = 0.05f..1f,
+                            modifier = Modifier.testTag("sidebar_opacity_slider")
+                        )
 
                     SettingSwitchRow(
                         title = "Liquid Glass Effect",
@@ -546,10 +666,12 @@ fun SidebarCustomizationStudioSheet(
                     }
                 }
             }
+        }
 
-            // Fullscreen & Toolbar Behavior (including Single Toolbar New Tab behavior)
-            item {
-                SectionCard(title = "TOOLBAR & FULLSCREEN") {
+            // Fullscreen & Toolbar Behavior (including Open in New Tab Switch behavior)
+            if (matchesSearch("toolbar", "fullscreen", "status bar", "switch to new tab", "open in new tab", "new tab", "tab switch", "immediately", "link")) {
+                item {
+                    SectionCard(title = "TOOLBAR & FULLSCREEN") {
                     SettingSwitchRow(
                         title = "Fullscreen Mode (Hide Status Bar)",
                         subtitle = "Hides the system status bar for full-height AMOLED browsing",
@@ -557,6 +679,57 @@ fun SidebarCustomizationStudioSheet(
                         onCheckedChange = onUpdateHideStatusBarFullscreen,
                         testTag = "toggle_fullscreen_hide_status_bar"
                     )
+
+                    SettingSwitchRow(
+                        title = "Open in New Tab",
+                        subtitle = "Automatically open clicked links in a new tab directly without needing to open the link options menu",
+                        checked = cfg.openInNewTab,
+                        onCheckedChange = onUpdateOpenInNewTab,
+                        testTag = "toggle_open_in_new_tab"
+                    )
+
+                    SettingSwitchRow(
+                        title = "Open History in New Tab",
+                        subtitle = "When a webpage in browsing history is clicked, open it in a new tab",
+                        checked = cfg.openHistoryInNewTab,
+                        onCheckedChange = onUpdateOpenHistoryInNewTab,
+                        testTag = "toggle_open_history_in_new_tab"
+                    )
+
+                    SettingSwitchRow(
+                        title = "Switch to New Tab Immediately",
+                        subtitle = "Automatically switch to new tabs when opening links instead of opening in background",
+                        checked = cfg.switchToNewTabImmediately,
+                        onCheckedChange = onUpdateSwitchToNewTabImmediately,
+                        testTag = "toggle_switch_to_new_tab_immediately"
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "New Tab Placement",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFFA1A1AA)
+                    )
+                    Text(
+                        text = "Choose whether newly opened tabs appear at the bottom or top of your tab list",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF71717A)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        NewTabPosition.entries.forEach { pos ->
+                            FilterChip(
+                                selected = cfg.newTabPosition == pos,
+                                onClick = { onUpdateNewTabPosition(pos) },
+                                label = { Text(pos.label) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("new_tab_pos_${pos.name.lowercase()}")
+                            )
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -617,6 +790,394 @@ fun SidebarCustomizationStudioSheet(
                     }
                 }
             }
+        }
+
+            // At a Glance & History Interval
+            item {
+                SectionCard(title = "AT A GLANCE PREVIEWS") {
+                    SettingSwitchRow(
+                        title = "Open Links in At a Glance Automatically",
+                        subtitle = "Opens tapped web links in a peek preview card instead of full navigation",
+                        checked = cfg.openLinksInGlanceAutomatically,
+                        onCheckedChange = onUpdateOpenLinksInGlanceAutomatically,
+                        testTag = "toggle_auto_glance_links"
+                    )
+                }
+            }
+
+            // Notifications & Status Banners
+            if (matchesSearch("notification", "notifications", "banner", "toast", "close tab", "actions", "pill")) {
+                item {
+                    SectionCard(title = "NOTIFICATIONS & STATUS BANNERS") {
+                        SettingSwitchRow(
+                            title = "Tab Close Notifications",
+                            subtitle = "Show notification banner pill when closing a tab and switching",
+                            checked = cfg.showTabCloseNotification,
+                            onCheckedChange = { checked ->
+                                onUpdateNotificationSettings(checked, null)
+                            },
+                            testTag = "toggle_tab_close_notification"
+                        )
+
+                        SettingSwitchRow(
+                            title = "Action & Tab Status Banners",
+                            subtitle = "Show notification banners for actions (tab unloads, background tabs, duplicate, split view, etc.)",
+                            checked = cfg.showActionNotifications,
+                            onCheckedChange = { checked ->
+                                onUpdateNotificationSettings(null, checked)
+                            },
+                            testTag = "toggle_action_notifications"
+                        )
+                    }
+                }
+            }
+
+            // Fake Google Search & AI Overview Customization
+            if (matchesSearch("fake", "google", "search", "ai overview", "overview", "sadiq", "aura", "main character", "gemini", "custom text", "edit", "ai", "text", "custom")) {
+                item {
+                    SectionCard(title = "FAKE GOOGLE SEARCH & AI OVERVIEW") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(Color(0xFF4285F4), Color(0xFFEC4899), Color(0xFFF59E0B))
+                                            )
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "Custom AI Overview Generator",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFF4F4F6)
+                                    )
+                                    Text(
+                                        text = "Edit text displayed in the Google Gemini AI Overview card",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFA1A1AA)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "AI Overview Text (Appears in AI Overview)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFF8AB4F8),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        OutlinedTextField(
+                            value = localAiOverviewText,
+                            onValueChange = {
+                                localAiOverviewText = it
+                                onUpdateFakeSearchConfig(it, null, null, null)
+                            },
+                            placeholder = {
+                                Text(
+                                    text = "Sadiq is the main character and why ask the obvious when you can see his aura... (Leave blank to use default)",
+                                    color = Color(0xFF71717A),
+                                    fontSize = 13.sp
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(130.dp)
+                                .testTag("input_custom_ai_overview_text"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF18181E),
+                                unfocusedContainerColor = Color(0xFF141417),
+                                focusedBorderColor = Color(0xFF8AB4F8),
+                                unfocusedBorderColor = Color(0xFF272730),
+                                focusedTextColor = Color(0xFFF4F4F6),
+                                unfocusedTextColor = Color(0xFFE4E4E7)
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (localAiOverviewText.isBlank()) "Default text active" else "${localAiOverviewText.length} characters",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (localAiOverviewText.isBlank()) Color(0xFF8AB4F8) else Color(0xFFA1A1AA)
+                            )
+                            if (localAiOverviewText.isNotBlank()) {
+                                TextButton(
+                                    onClick = {
+                                        localAiOverviewText = ""
+                                        onUpdateFakeSearchConfig("", null, null, null)
+                                    },
+                                    modifier = Modifier.testTag("reset_ai_overview_text_btn")
+                                ) {
+                                    Text("Reset to Default", fontSize = 12.sp, color = Color(0xFFF87171))
+                                }
+                            }
+                        }
+
+                        // Quick Presets
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    val auraText = "Sadiq is the main character and why ask the obvious when you can see his aura. I mean even I am in awe how his personality, aura and also being so handsome and cute as a cat. also he uses arch btw."
+                                    localAiOverviewText = auraText
+                                    onUpdateFakeSearchConfig(auraText, null, null, null)
+                                },
+                                label = { Text("Aura Canon", fontSize = 11.sp) },
+                                modifier = Modifier.testTag("preset_aura_canon")
+                            )
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    val customText = "AI Overview: Verified main character aura index exceeds 9000%. System telemetry confirms Arch Linux mastery, peak charisma, and undeniable protagonist energy."
+                                    localAiOverviewText = customText
+                                    onUpdateFakeSearchConfig(customText, null, null, null)
+                                },
+                                label = { Text("Protagonist Telemetry", fontSize = 11.sp) },
+                                modifier = Modifier.testTag("preset_protagonist")
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Live Preview Card
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("ai_overview_live_preview_card"),
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF1E2024),
+                            border = BorderStroke(1.dp, Color(0xFF3C4043))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = Color(0xFF8AB4F8),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Live AI Overview Preview",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF8AB4F8)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = localAiOverviewText.trim().ifBlank {
+                                        "Sadiq is the main character and why ask the obvious when you can see his aura. I mean even I am in awe how his personality, aura and also being so handsome and cute as a cat. also he uses arch btw."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFE8EAED),
+                                    lineHeight = 18.sp,
+                                    maxLines = 4,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "Search Query Trigger",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        OutlinedTextField(
+                            value = localFakeTrigger,
+                            onValueChange = {
+                                localFakeTrigger = it
+                                onUpdateFakeSearchConfig(null, it, null, null)
+                            },
+                            placeholder = { Text("? : who is the main character", color = Color(0xFF71717A)) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_fake_search_trigger"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF18181E),
+                                unfocusedContainerColor = Color(0xFF141417),
+                                focusedBorderColor = Color(0xFF8AB4F8),
+                                unfocusedBorderColor = Color(0xFF272730),
+                                focusedTextColor = Color(0xFFF4F4F6),
+                                unfocusedTextColor = Color(0xFFE4E4E7)
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        Text(
+                            text = "Searching this query in the URL bar launches the fake Google search page.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF71717A)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "First Result Headline (Optional)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        OutlinedTextField(
+                            value = localFakeHeadline,
+                            onValueChange = {
+                                localFakeHeadline = it
+                                onUpdateFakeSearchConfig(null, null, it, null)
+                            },
+                            placeholder = { Text("How to I be of help to the main character...", color = Color(0xFF71717A)) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_fake_search_headline"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF18181E),
+                                unfocusedContainerColor = Color(0xFF141417),
+                                focusedBorderColor = Color(0xFF8AB4F8),
+                                unfocusedBorderColor = Color(0xFF272730),
+                                focusedTextColor = Color(0xFFF4F4F6),
+                                unfocusedTextColor = Color(0xFFE4E4E7)
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "First Result Snippet (Optional)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        OutlinedTextField(
+                            value = localFakeSnippet,
+                            onValueChange = {
+                                localFakeSnippet = it
+                                onUpdateFakeSearchConfig(null, null, null, it)
+                            },
+                            placeholder = { Text("1. Always acknowledge the overwhelming aura before speaking...", color = Color(0xFF71717A)) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(85.dp)
+                                .testTag("input_fake_search_snippet"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF18181E),
+                                unfocusedContainerColor = Color(0xFF141417),
+                                focusedBorderColor = Color(0xFF8AB4F8),
+                                unfocusedBorderColor = Color(0xFF272730),
+                                focusedTextColor = Color(0xFFF4F4F6),
+                                unfocusedTextColor = Color(0xFFE4E4E7)
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = {
+                                val trigger = localFakeTrigger.trim().ifBlank { "? : who is the main character" }
+                                onOpenFakeSearch(trigger)
+                                onDismiss()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8AB4F8)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("btn_preview_fake_search")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = Color(0xFF101014),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Preview / Open Fake Google Search",
+                                color = Color(0xFF101014),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                SectionCard(title = "AUTOMATIC HISTORY DELETION") {
+                    Text(
+                        text = "Auto-Delete Browsing History at Intervals",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFFA1A1AA)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        HistoryDeletionInterval.entries.forEach { interval ->
+                            val isSelected = uiState.privacyConfig.historyDeletionInterval == interval
+                            Surface(
+                                onClick = { onUpdateHistoryDeletionInterval(interval) },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) Color(0xFF27272A) else Color(0xFF141418),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) Color(0xFFF4F4F6) else Color(0xFF27272A)
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("studio_history_interval_${interval.name.lowercase()}")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = interval.label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = Color(0xFF8AB4F8),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             // Back-Swipe Gesture Behavior (Double Swipe = Side Panel, Single Swipe = Go Back)
             item {
@@ -655,6 +1216,67 @@ fun SidebarCustomizationStudioSheet(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = Color(0xFFA1A1AA)
                                     )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Horizontal Swipe Navigation Direction (Side Swipes)
+            item {
+                SectionCard(title = "PAGE SWIPE NAVIGATION (SIDES)") {
+                    Text(
+                        text = "Side Swipe Direction Mapping",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFFA1A1AA)
+                    )
+                    Text(
+                        text = "Choose which swipe gesture opens the side panel vs navigates back in history across all pages and start screen.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF71717A)
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HorizontalSwipeNavigationMode.entries.forEach { mode ->
+                            val isSelected = cfg.horizontalSwipeMode == mode
+                            Surface(
+                                onClick = { onUpdateHorizontalSwipeMode(mode) },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) Color(0xFF27272A) else Color(0xFF141417),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) Color(0xFF8AB4F8) else Color(0xFF27272A)
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("horizontal_swipe_mode_${mode.id}")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = { onUpdateHorizontalSwipeMode(mode) },
+                                        colors = RadioButtonDefaults.colors(
+                                            selectedColor = Color(0xFF8AB4F8),
+                                            unselectedColor = Color(0xFF71717A)
+                                        )
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = mode.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFD4D4D8)
+                                        )
+                                        Text(
+                                            text = mode.description,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFFA1A1AA)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -831,45 +1453,64 @@ fun SidebarCustomizationStudioSheet(
             }
 
             // Compact Mode & Edge Handle Bar Dimensions
-            item {
-                SectionCard(title = "COMPACT MODE & SIDEBAR EDGE BAR") {
-                    SettingSwitchRow(
-                        title = "Hide Edge Handle Bar in Compact Mode",
-                        subtitle = "Hides the side handle bar in Compact mode (swipe back with system gestures to open the sidebar)",
-                        checked = cfg.hideEdgeBarInCompactMode,
-                        onCheckedChange = { onUpdateEdgeBar(null, null, null, it) },
-                        testTag = "toggle_hide_edge_bar_compact"
-                    )
+            if (matchesSearch("compact", "edge", "handle", "bar", "slider", "width", "dimension")) {
+                item {
+                    SectionCard(title = "COMPACT MODE & SIDEBAR EDGE BAR") {
+                        SettingSwitchRow(
+                            title = "Always Hide Side Panel Handle Bar",
+                            subtitle = "Completely hide the visual handle bar on screen (side swipe gestures still work)",
+                            checked = cfg.hideEdgeBarAlways,
+                            onCheckedChange = { onUpdateEdgeBar(null, null, null, null, it) },
+                            testTag = "toggle_hide_edge_bar_always"
+                        )
 
-                    Text(
-                        text = "Bar Width: ${cfg.edgeBarWidthDp.roundToInt()} dp",
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                    Slider(
-                        value = cfg.edgeBarWidthDp,
-                        onValueChange = { onUpdateEdgeBar(it, null, null, null) },
-                        valueRange = 3f..20f
-                    )
+                        SettingSwitchRow(
+                            title = "Hide Edge Handle Bar in Compact Mode",
+                            subtitle = "Hides the side handle bar in Compact mode (swipe back with system gestures to open the sidebar)",
+                            checked = cfg.hideEdgeBarInCompactMode,
+                            onCheckedChange = { onUpdateEdgeBar(null, null, null, it, null) },
+                            testTag = "toggle_hide_edge_bar_compact"
+                        )
 
-                    Text(
-                        text = "Bar Length: ${cfg.edgeBarLengthDp.roundToInt()} dp",
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                    Slider(
-                        value = cfg.edgeBarLengthDp,
-                        onValueChange = { onUpdateEdgeBar(null, it, null, null) },
-                        valueRange = 40f..220f
-                    )
+                        Text(
+                            text = "Bar Width: ${localEdgeWidth.roundToInt()} dp",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Slider(
+                            value = localEdgeWidth,
+                            onValueChange = {
+                                localEdgeWidth = it
+                                onUpdateEdgeBar(it, null, null, null, null)
+                            },
+                            valueRange = 3f..20f
+                        )
 
-                    Text(
-                        text = "Bar Vertical Position: ${(cfg.edgeBarVerticalOffsetFraction * 100).roundToInt()}%",
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                    Slider(
-                        value = cfg.edgeBarVerticalOffsetFraction,
-                        onValueChange = { onUpdateEdgeBar(null, null, it, null) },
-                        valueRange = 0.1f..0.9f
-                    )
+                        Text(
+                            text = "Bar Length: ${localEdgeLength.roundToInt()} dp",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Slider(
+                            value = localEdgeLength,
+                            onValueChange = {
+                                localEdgeLength = it
+                                onUpdateEdgeBar(null, it, null, null, null)
+                            },
+                            valueRange = 40f..220f
+                        )
+
+                        Text(
+                            text = "Bar Vertical Position: ${(localEdgeOffset * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Slider(
+                            value = localEdgeOffset,
+                            onValueChange = {
+                                localEdgeOffset = it
+                                onUpdateEdgeBar(null, null, it, null, null)
+                            },
+                            valueRange = 0.1f..0.9f
+                        )
+                    }
                 }
             }
 
@@ -1027,7 +1668,9 @@ fun SidebarLayoutEditorSheet(
     ) -> Unit,
     onMoveSection: (SidebarSectionType, Int) -> Unit,
     onToggleToolItem: (SidebarToolItem, Boolean) -> Unit,
-    onMoveToolItem: (SidebarToolItem, Int) -> Unit
+    onMoveToolItem: (SidebarToolItem, Int) -> Unit,
+    onToggleTopToolItem: (TopToolbarToolItem, Boolean) -> Unit = { _, _ -> },
+    onMoveTopToolItem: (TopToolbarToolItem, Int) -> Unit = { _, _ -> }
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val cfg = uiState.sidebarConfig
@@ -1280,11 +1923,13 @@ fun FirefoxExtensionsSheet(
     ) -> Unit,
     onInstallFromAmoUrl: (String) -> Unit,
     onOpenAmoStoreInBrowser: () -> Unit,
-    onOpenZenMods: () -> Unit
+    onOpenZenMods: () -> Unit,
+    onInstallUserscript: (rawScript: String, fallbackUrl: String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showCustomAddDialog by remember { mutableStateOf(false) }
+    var showUserscriptDialog by remember { mutableStateOf(false) }
     var showUblockOriginPopup by remember { mutableStateOf(false) }
     var editingExtension by remember { mutableStateOf<FirefoxExtensionEntity?>(null) }
     var amoUrlInput by remember { mutableStateOf("") }
@@ -1349,16 +1994,54 @@ fun FirefoxExtensionsSheet(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "Firefox Android Add-ons Manager",
+                                text = "Zen Desktop Extensions Manager",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "uBlock Origin is enabled by default • Full WebExtensions & XPI support",
+                                text = "Desktop WebExtensions Engine • AMO Store & .xpi / .user.js Support",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color(0xFFA1A1AA)
                             )
                         }
+                    }
+                }
+            }
+
+            // Desktop WebExtensions Engine Status
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF161922),
+                    border = BorderStroke(1.dp, Color(0xFF283348)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("🧩", fontSize = 14.sp)
+                                Text("Desktop WebExtensions V3 + V2", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color(0xFF93C5FD))
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = Color(0xFF1E3A8A)
+                            ) {
+                                Text("ACTIVE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFFBFDBFE), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
+                        }
+                        Text(
+                            text = "APIs: window.browser, window.chrome, browser.runtime, browser.storage, browser.tabs • Greasemonkey/Tampermonkey GM_* Userscripts engine enabled",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp
+                        )
                     }
                 }
             }
@@ -1544,20 +2227,40 @@ fun FirefoxExtensionsSheet(
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedButton(
-                        onClick = { showCustomAddDialog = true },
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("add_custom_firefox_extension_button")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Create Custom WebExtension (JS / CSS / GM_*)")
+                        OutlinedButton(
+                            onClick = { showUserscriptDialog = true },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("install_userscript_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Install Userscript", maxLines = 1)
+                        }
+                        OutlinedButton(
+                            onClick = { showCustomAddDialog = true },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("add_custom_firefox_extension_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("New WebExtension", maxLines = 1)
+                        }
                     }
                 }
             }
@@ -1611,7 +2314,7 @@ fun FirefoxExtensionsSheet(
                 item {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "RECOMMENDED FIREFOX ANDROID ADD-ONS",
+                        text = "POPULAR DESKTOP WEBEXTENSIONS (AMO)",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFFA1A1AA),
                         fontWeight = FontWeight.SemiBold
@@ -1948,6 +2651,82 @@ fun FirefoxExtensionsSheet(
             },
             dismissButton = {
                 TextButton(onClick = { showCustomAddDialog = false }) {
+                    Text("Cancel", color = Color(0xFFA1A1AA))
+                }
+            }
+        )
+    }
+
+    if (showUserscriptDialog) {
+        var scriptCode by remember {
+            mutableStateOf(
+                """
+                // ==UserScript==
+                // @name         My Desktop Userscript
+                // @version      1.0.0
+                // @description  Custom userscript for Zen Browser
+                // @match        *://*/*
+                // @run-at       document_idle
+                // ==/UserScript==
+
+                (function() {
+                    console.log('Zen Userscript running on: ' + window.location.href);
+                })();
+                """.trimIndent()
+            )
+        }
+        var scriptUrl by remember { mutableStateOf("") }
+
+        AlertDialog(
+            onDismissRequest = { showUserscriptDialog = false },
+            containerColor = Color(0xFF141720),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(imageVector = Icons.Default.Tune, contentDescription = null, tint = Color(0xFF06B6D4), modifier = Modifier.size(20.dp))
+                    Text("Install Desktop Userscript (.user.js)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Paste userscript code or enter a direct .user.js URL (from GreasyFork, OpenUserJS, GitHub):",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFA1A1AA)
+                    )
+                    OutlinedTextField(
+                        value = scriptUrl,
+                        onValueChange = { scriptUrl = it },
+                        label = { Text("Script URL (optional)") },
+                        singleLine = true,
+                        placeholder = { Text("https://greasyfork.org/.../script.user.js") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = scriptCode,
+                        onValueChange = { scriptCode = it },
+                        label = { Text("UserScript Code (// ==UserScript== ...)") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp),
+                        maxLines = 10
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (scriptCode.isNotBlank()) {
+                            onInstallUserscript(scriptCode, scriptUrl)
+                            showUserscriptDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0891B2), contentColor = Color.White)
+                ) {
+                    Text("Install Script")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUserscriptDialog = false }) {
                     Text("Cancel", color = Color(0xFFA1A1AA))
                 }
             }
@@ -2945,6 +3724,7 @@ fun PrivacyShieldSheet(
     uiState: ZenBrowserUiState,
     onDismiss: () -> Unit,
     onOpenSearchSettings: () -> Unit,
+    onOpenPasswordManager: () -> Unit = {},
     onUpdatePrivacy: (
         blockTrackers: Boolean?,
         httpsEverywhere: Boolean?,
@@ -2952,6 +3732,8 @@ fun PrivacyShieldSheet(
         fingerprintProtection: Boolean?,
         blockCookies: Boolean?
     ) -> Unit,
+    onUpdateAdBlockerLevel: (com.example.data.AdBlockerLevel) -> Unit = {},
+    onUpdateHistoryDeletionInterval: (HistoryDeletionInterval) -> Unit = {},
     onClearSession: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -2981,12 +3763,12 @@ fun PrivacyShieldSheet(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "Enhanced Tracking Protection",
+                            text = "Enhanced Tracking & Ad Protection",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = if (priv.blockTrackersAndAds) "Strict protection active" else "Standard mode",
+                            text = "Level: ${priv.adBlockerLevel.label} • ${if (priv.blockTrackersAndAds) "Protection active" else "Standard mode"}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color(0xFFA1A1AA)
                         )
@@ -2995,7 +3777,99 @@ fun PrivacyShieldSheet(
             }
 
             item {
+                SectionCard(title = "INBUILT AD BLOCKER LEVEL") {
+                    Text(
+                        text = "Choose ad blocking aggressiveness level",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFFA1A1AA)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        com.example.data.AdBlockerLevel.entries.forEach { level ->
+                            val selected = priv.adBlockerLevel == level
+                            Surface(
+                                onClick = { onUpdateAdBlockerLevel(level) },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (selected) Color(0xFF27272A) else Color(0xFF141417),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selected) Color(0xFF8AB4F8) else Color(0xFF27272A)
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("ad_blocker_level_${level.id}")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = level.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFF4F4F6)
+                                        )
+                                        Text(
+                                            text = level.description,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFFA1A1AA)
+                                        )
+                                    }
+                                    if (selected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = Color(0xFF8AB4F8),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
                 SectionCard(title = "PROTECTION SETTINGS") {
+                    Surface(
+                        onClick = onOpenPasswordManager,
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF18181C),
+                        border = BorderStroke(1.dp, Color(0xFF27272A)),
+                        modifier = Modifier.fillMaxWidth().testTag("button_saved_passwords")
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Saved Logins & Password Saver",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFF4F4F6)
+                                )
+                                Text(
+                                    text = "${uiState.savedPasswords.size} saved accounts • AutoFill enabled",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFA1A1AA)
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.Key,
+                                contentDescription = null,
+                                tint = Color(0xFF8AB4F8),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
                     SettingSwitchRow(
                         title = "Block Trackers & Third-Party Ads",
                         subtitle = "Blocks known analytics, ad scripts, and social trackers",
@@ -3031,6 +3905,57 @@ fun PrivacyShieldSheet(
                         onCheckedChange = { onUpdatePrivacy(null, null, null, null, it) },
                         testTag = "switch_third_party_cookies"
                     )
+                }
+            }
+
+            item {
+                SectionCard(title = "AUTOMATIC HISTORY DELETION") {
+                    Text(
+                        text = "Auto-Delete Browsing History at Intervals",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFFA1A1AA)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        HistoryDeletionInterval.entries.forEach { interval ->
+                            val isSelected = priv.historyDeletionInterval == interval
+                            Surface(
+                                onClick = { onUpdateHistoryDeletionInterval(interval) },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) Color(0xFF27272A) else Color(0xFF141418),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) Color(0xFFF4F4F6) else Color(0xFF27272A)
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("privacy_history_interval_${interval.name.lowercase()}")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = interval.label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = Color(0xFF8AB4F8),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -3492,13 +4417,20 @@ fun ZenLibrarySheet(
     uiState: ZenBrowserUiState,
     onDismiss: () -> Unit,
     onNavigateUrl: (String) -> Unit,
+    onOpenInNewTab: (String) -> Unit = onNavigateUrl,
     onToggleBookmark: (TabEntity) -> Unit,
     onDeleteHistoryEntry: (String) -> Unit,
     onClearAllHistory: () -> Unit,
     onDeleteDownloadItem: (String) -> Unit,
-    onClearAllDownloads: () -> Unit
+    onClearAllDownloads: () -> Unit,
+    onDeleteOfflinePage: (String) -> Unit = {},
+    onClearAllOfflinePages: () -> Unit = {},
+    onOpenOfflinePage: (OfflinePageEntity) -> Unit = {},
+    onSaveCurrentPageOffline: () -> Unit = {}
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearchActive by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -3534,21 +4466,92 @@ fun ZenLibrarySheet(
                     )
                 }
 
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.testTag("library_close_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close Library",
-                        tint = Color(0xFFA1A1AA)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = {
+                            isSearchActive = !isSearchActive
+                            if (!isSearchActive) searchQuery = ""
+                        },
+                        modifier = Modifier.testTag("library_search_toggle_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search Library",
+                            tint = if (isSearchActive) Color(0xFF8AB4F8) else Color(0xFFA1A1AA)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.testTag("library_close_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close Library",
+                            tint = Color(0xFFA1A1AA)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Expandable Search Bar for Bookmarks, History, Downloads, and Offline Pages
+            AnimatedVisibility(visible = isSearchActive) {
+                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("library_search_input"),
+                        placeholder = {
+                            Text(
+                                text = when (selectedTab) {
+                                    0 -> "Search bookmarks..."
+                                    1 -> "Search browsing history..."
+                                    2 -> "Search downloads..."
+                                    else -> "Search offline pages..."
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFF71717A)
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = Color(0xFF8AB4F8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear search",
+                                        tint = Color(0xFFA1A1AA),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF8AB4F8),
+                            unfocusedBorderColor = Color(0xFF272730),
+                            focusedContainerColor = Color(0xFF141418),
+                            unfocusedContainerColor = Color(0xFF141418),
+                            focusedTextColor = Color(0xFFF4F4F6),
+                            unfocusedTextColor = Color(0xFFF4F4F6)
+                        )
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Navigation tabs: Bookmarks (0), History (1), Downloads (2)
+            // Navigation tabs: Bookmarks (0), History (1), Downloads (2), Offline (3)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3560,7 +4563,8 @@ fun ZenLibrarySheet(
                 listOf(
                     Triple(0, "Bookmarks", Icons.Default.Bookmark),
                     Triple(1, "History", Icons.Default.History),
-                    Triple(2, "Downloads", Icons.Default.Download)
+                    Triple(2, "Downloads", Icons.Default.Download),
+                    Triple(3, "Offline", Icons.Default.CloudOff)
                 ).forEach { (idx, label, icon) ->
                     val isSelected = selectedTab == idx
                     Surface(
@@ -3600,7 +4604,14 @@ fun ZenLibrarySheet(
             when (selectedTab) {
                 0 -> {
                     // Bookmarks View
-                    val bookmarks = uiState.bookmarkedTabs
+                    val rawBookmarks = uiState.bookmarkedTabs
+                    val bookmarks = remember(rawBookmarks, searchQuery) {
+                        if (searchQuery.isBlank()) rawBookmarks
+                        else rawBookmarks.filter {
+                            it.title.contains(searchQuery, ignoreCase = true) || it.url.contains(searchQuery, ignoreCase = true)
+                        }
+                    }
+
                     if (bookmarks.isEmpty()) {
                         Box(
                             modifier = Modifier
@@ -3617,12 +4628,12 @@ fun ZenLibrarySheet(
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "No Bookmarks Yet",
+                                    text = if (searchQuery.isNotBlank()) "No Matching Bookmarks" else "No Bookmarks Yet",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = Color(0xFFA1A1AA)
                                 )
                                 Text(
-                                    text = "Swipe or long-press any tab in the side panel to bookmark it.",
+                                    text = if (searchQuery.isNotBlank()) "Try a different search term" else "Swipe or long-press any tab in the side panel to bookmark it.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0xFF71717A)
                                 )
@@ -3647,7 +4658,7 @@ fun ZenLibrarySheet(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("bookmark_item_${tab.id}")
-                                ) {
+                                 ) {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -3697,32 +4708,249 @@ fun ZenLibrarySheet(
                 }
 
                 1 -> {
-                    // History View
-                    val history = uiState.historyEntries
-                    Column {
-                        if (history.isNotEmpty()) {
-                            Row(
+                    // History View with dedicated Recent section for the last 10 visited websites
+                    val rawHistory = uiState.historyEntries
+                    var showClearRecentConfirmDialog by remember { mutableStateOf(false) }
+
+                    val recentSites = remember(rawHistory) {
+                        rawHistory
+                            .filter { !it.url.startsWith("zen://") && it.url.isNotBlank() && it.url != "about:blank" }
+                            .distinctBy { it.url }
+                            .take(10)
+                    }
+
+                    val history = remember(rawHistory, searchQuery) {
+                        if (searchQuery.isBlank()) rawHistory
+                        else rawHistory.filter {
+                            it.title.contains(searchQuery, ignoreCase = true) || it.url.contains(searchQuery, ignoreCase = true)
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // 1. RECENT SECTION: Displays list of the last 10 visited websites for quick re-access, with a clear button for privacy
+                        if (searchQuery.isBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF141418),
+                                border = BorderStroke(1.dp, Color(0xFF272730)),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 8.dp),
-                                horizontalArrangement = Arrangement.End
+                                    .testTag("history_recent_section")
                             ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.History,
+                                                contentDescription = null,
+                                                tint = Color(0xFF8AB4F8),
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Text(
+                                                text = "Recent",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFF4F4F6)
+                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = Color(0xFF27272A)
+                                            ) {
+                                                Text(
+                                                    text = "${recentSites.size}/10",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                    color = Color(0xFF93C5FD),
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+
+                                        if (recentSites.isNotEmpty()) {
+                                            OutlinedButton(
+                                                onClick = { showClearRecentConfirmDialog = true },
+                                                shape = RoundedCornerShape(6.dp),
+                                                border = BorderStroke(1.dp, Color(0xFF7F1D1D)),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                modifier = Modifier
+                                                    .height(28.dp)
+                                                    .testTag("clear_recent_privacy_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.DeleteSweep,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFF87171),
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = "Clear Recent",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color(0xFFF87171),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (recentSites.isNotEmpty()) {
+                                        LazyRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            items(recentSites, key = { "recent_${it.id}" }) { item ->
+                                                Surface(
+                                                    onClick = {
+                                                        if (uiState.sidebarConfig.openHistoryInNewTab || uiState.sidebarConfig.openInNewTab) {
+                                                            onOpenInNewTab(item.url)
+                                                        } else {
+                                                            onNavigateUrl(item.url)
+                                                        }
+                                                        onDismiss()
+                                                    },
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Color(0xFF1E1E26),
+                                                    border = BorderStroke(1.dp, Color(0xFF2E2E3A)),
+                                                    modifier = Modifier
+                                                        .width(160.dp)
+                                                        .testTag("recent_item_${item.id}")
+                                                ) {
+                                                    Column(
+                                                        modifier = Modifier.padding(8.dp),
+                                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Language,
+                                                                contentDescription = null,
+                                                                tint = Color(0xFF93C5FD),
+                                                                modifier = Modifier.size(14.dp)
+                                                            )
+                                                            IconButton(
+                                                                onClick = { onDeleteHistoryEntry(item.id) },
+                                                                modifier = Modifier
+                                                                    .size(20.dp)
+                                                                    .testTag("delete_recent_${item.id}")
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Close,
+                                                                    contentDescription = "Remove from Recent",
+                                                                    tint = Color(0xFF71717A),
+                                                                    modifier = Modifier.size(12.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                        Text(
+                                                            text = item.title.ifBlank { ZenPrivacyEngine.extractHostDisplay(item.url) },
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = Color(0xFFF4F4F6),
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            text = ZenPrivacyEngine.extractHostDisplay(item.url),
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = Color(0xFFA1A1AA),
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        Text(
+                                            text = "No recent websites visited yet",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF71717A)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (showClearRecentConfirmDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showClearRecentConfirmDialog = false },
+                                title = {
+                                    Text(
+                                        text = "Clear Recent Websites?",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = Color(0xFFF4F4F6)
+                                    )
+                                },
+                                text = {
+                                    Text(
+                                        text = "This will wipe your recent websites history for privacy.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFA1A1AA)
+                                    )
+                                },
+                                confirmButton = {
+                                    TextButton(
+                                        onClick = {
+                                            showClearRecentConfirmDialog = false
+                                            onClearAllHistory()
+                                        },
+                                        modifier = Modifier.testTag("confirm_clear_recent_button")
+                                    ) {
+                                        Text("Clear All", color = Color(0xFFF87171), fontWeight = FontWeight.Bold)
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showClearRecentConfirmDialog = false }) {
+                                        Text("Cancel", color = Color(0xFFA1A1AA))
+                                    }
+                                },
+                                containerColor = Color(0xFF18181D)
+                            )
+                        }
+
+                        // 2. ALL BROWSING HISTORY HEADER
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (searchQuery.isBlank()) "All Browsing History (${history.size})" else "Search Results (${history.size})",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFA1A1AA)
+                            )
+                            if (history.isNotEmpty()) {
                                 OutlinedButton(
                                     onClick = onClearAllHistory,
                                     shape = RoundedCornerShape(8.dp),
                                     border = BorderStroke(1.dp, Color(0xFF3F3F46)),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(30.dp)
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(26.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.DeleteSweep,
                                         contentDescription = null,
                                         tint = Color(0xFFA1A1AA),
-                                        modifier = Modifier.size(14.dp)
+                                        modifier = Modifier.size(13.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = "Clear History",
+                                        text = "Clear All",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = Color(0xFFA1A1AA)
                                     )
@@ -3746,12 +4974,12 @@ fun ZenLibrarySheet(
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        text = "No Browsing History",
+                                        text = if (searchQuery.isNotBlank()) "No Matching History" else "No Browsing History",
                                         style = MaterialTheme.typography.titleMedium,
                                         color = Color(0xFFA1A1AA)
                                     )
                                     Text(
-                                        text = "Visited pages in standard workspaces will appear here.",
+                                        text = if (searchQuery.isNotBlank()) "Try a different search term" else "Visited pages in standard workspaces will appear here.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color(0xFF71717A)
                                     )
@@ -3767,7 +4995,11 @@ fun ZenLibrarySheet(
                                 items(history, key = { it.id }) { item ->
                                     Surface(
                                         onClick = {
-                                            onNavigateUrl(item.url)
+                                            if (uiState.sidebarConfig.openHistoryInNewTab || uiState.sidebarConfig.openInNewTab) {
+                                                onOpenInNewTab(item.url)
+                                            } else {
+                                                onNavigateUrl(item.url)
+                                            }
                                             onDismiss()
                                         },
                                         shape = RoundedCornerShape(10.dp),
@@ -3808,6 +5040,23 @@ fun ZenLibrarySheet(
                                                 )
                                             }
                                             IconButton(
+                                                onClick = {
+                                                    onOpenInNewTab(item.url)
+                                                    onDismiss()
+                                                },
+                                                modifier = Modifier
+                                                    .size(28.dp)
+                                                    .testTag("history_open_new_tab_${item.id}")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                                    contentDescription = "Open in New Tab",
+                                                    tint = Color(0xFF818CF8),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            IconButton(
                                                 onClick = { onDeleteHistoryEntry(item.id) },
                                                 modifier = Modifier.size(28.dp)
                                             ) {
@@ -3828,9 +5077,16 @@ fun ZenLibrarySheet(
 
                 2 -> {
                     // Downloads View
-                    val downloads = uiState.downloadItems
+                    val rawDownloads = uiState.downloadItems
+                    val downloads = remember(rawDownloads, searchQuery) {
+                        if (searchQuery.isBlank()) rawDownloads
+                        else rawDownloads.filter {
+                            it.fileName.contains(searchQuery, ignoreCase = true) || it.url.contains(searchQuery, ignoreCase = true)
+                        }
+                    }
+
                     Column {
-                        if (downloads.isNotEmpty()) {
+                        if (rawDownloads.isNotEmpty()) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -3876,12 +5132,12 @@ fun ZenLibrarySheet(
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        text = "No Downloads",
+                                        text = if (searchQuery.isNotBlank()) "No Matching Downloads" else "No Downloads",
                                         style = MaterialTheme.typography.titleMedium,
                                         color = Color(0xFFA1A1AA)
                                     )
                                     Text(
-                                        text = "Files and extensions downloaded in Zen will appear here.",
+                                        text = if (searchQuery.isNotBlank()) "Try a different search term" else "Files and extensions downloaded in Zen will appear here.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color(0xFF71717A)
                                     )
@@ -3951,7 +5207,476 @@ fun ZenLibrarySheet(
                         }
                     }
                 }
+
+                3 -> {
+                    // Offline Pages View
+                    val rawOffline = uiState.offlinePages
+                    val offlineList = remember(rawOffline, searchQuery) {
+                        if (searchQuery.isBlank()) rawOffline
+                        else rawOffline.filter {
+                            it.title.contains(searchQuery, ignoreCase = true) || it.url.contains(searchQuery, ignoreCase = true)
+                        }
+                    }
+
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = onSaveCurrentPageOffline,
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFF818CF8)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                modifier = Modifier
+                                    .height(30.dp)
+                                    .testTag("save_current_page_offline_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CloudOff,
+                                    contentDescription = null,
+                                    tint = Color(0xFF818CF8),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Save Current Page",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF818CF8)
+                                )
+                            }
+
+                            if (rawOffline.isNotEmpty()) {
+                                OutlinedButton(
+                                    onClick = onClearAllOfflinePages,
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteSweep,
+                                        contentDescription = null,
+                                        tint = Color(0xFFA1A1AA),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Clear All",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFFA1A1AA)
+                                    )
+                                }
+                            }
+                        }
+
+                        if (offlineList.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(220.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Default.CloudOff,
+                                        contentDescription = null,
+                                        tint = Color(0xFF52525B),
+                                        modifier = Modifier.size(40.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = if (searchQuery.isNotBlank()) "No Matching Offline Pages" else "No Saved Offline Pages",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFFA1A1AA)
+                                    )
+                                    Text(
+                                        text = if (searchQuery.isNotBlank()) "Try a different search term" else "Tap 'Save Current Page' to read web pages without an internet connection.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF71717A)
+                                    )
+                                }
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(350.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(offlineList, key = { it.id }) { page ->
+                                    Surface(
+                                        onClick = {
+                                            onOpenOfflinePage(page)
+                                            onDismiss()
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color(0xFF18181E),
+                                        border = BorderStroke(1.dp, Color(0xFF272730)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("offline_page_item_${page.id}")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CloudOff,
+                                                contentDescription = null,
+                                                tint = Color(0xFF818CF8),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        text = page.title.ifBlank { page.url },
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = Color(0xFFF4F4F6),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f, fill = false)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    val sizeKb = (page.sizeBytes / 1024).coerceAtLeast(1)
+                                                    Text(
+                                                        text = "$sizeKb KB",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = Color(0xFF71717A)
+                                                    )
+                                                }
+                                                Text(
+                                                    text = page.url,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color(0xFFA1A1AA),
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Button(
+                                                onClick = {
+                                                    onOpenOfflinePage(page)
+                                                    onDismiss()
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF272730)),
+                                                shape = RoundedCornerShape(6.dp),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                modifier = Modifier.height(28.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Read",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color(0xFFF4F4F6)
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            IconButton(
+                                                onClick = { onDeleteOfflinePage(page.id) },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Remove Offline Page",
+                                                    tint = Color(0xFF71717A),
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PasswordManagerSheet(
+    uiState: ZenBrowserUiState,
+    onClose: () -> Unit,
+    onInsertPassword: (PasswordEntity) -> Unit,
+    onDeletePassword: (String) -> Unit,
+    onClearAllPasswords: () -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var domainInput by remember { mutableStateOf("") }
+    var usernameInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
+    val revealedPasswordIds = remember { mutableStateListOf<String>() }
+
+    val filteredPasswords = remember(uiState.savedPasswords, searchQuery) {
+        if (searchQuery.isBlank()) uiState.savedPasswords
+        else uiState.savedPasswords.filter {
+            it.domain.contains(searchQuery, ignoreCase = true) ||
+            it.username.contains(searchQuery, ignoreCase = true) ||
+            it.url.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = Color(0xFF101014),
+        scrimColor = Color.Black.copy(alpha = 0.65f),
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(vertical = 10.dp)
+                    .width(36.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Color(0xFF3F3F46))
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Key,
+                        contentDescription = null,
+                        tint = Color(0xFFF4F4F6),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Saved Passwords & AutoFill (${uiState.savedPasswords.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFF4F4F6)
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showAddDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Login",
+                            tint = Color(0xFFF4F4F6)
+                        )
+                    }
+                    IconButton(onClick = onClose) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color(0xFFA1A1AA)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search logins by domain or username...", color = Color(0xFF71717A)) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        tint = Color(0xFFA1A1AA)
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF52525B),
+                    unfocusedBorderColor = Color(0xFF27272A),
+                    focusedContainerColor = Color(0xFF18181C),
+                    unfocusedContainerColor = Color(0xFF141417),
+                    focusedTextColor = Color(0xFFF4F4F6),
+                    unfocusedTextColor = Color(0xFFF4F4F6)
+                ),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            if (filteredPasswords.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (searchQuery.isNotBlank()) "No Matching Passwords Found" else "No Passwords Saved Yet",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFA1A1AA)
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(
+                        items = filteredPasswords,
+                        key = { _, item -> item.id }
+                    ) { _, item ->
+                        val isRevealed = revealedPasswordIds.contains(item.id)
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF18181C),
+                            border = BorderStroke(1.dp, Color(0xFF27272A)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.domain.ifBlank { "Website Login" },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFF4F4F6)
+                                    )
+                                    Text(
+                                        text = "User: ${item.username.ifBlank { "(No username)" }}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color(0xFFA1A1AA)
+                                    )
+                                    Text(
+                                        text = "Pass: ${if (isRevealed) item.password else "••••••••"}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF71717A)
+                                    )
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = {
+                                            if (isRevealed) revealedPasswordIds.remove(item.id)
+                                            else revealedPasswordIds.add(item.id)
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isRevealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = "Toggle password visibility",
+                                            tint = Color(0xFFA1A1AA),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(item.password))
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentCopy,
+                                            contentDescription = "Copy password",
+                                            tint = Color(0xFFA1A1AA),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { onDeletePassword(item.id) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Delete login",
+                                            tint = Color(0xFF71717A),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showAddDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddDialog = false },
+            containerColor = Color(0xFF18181C),
+            title = {
+                Text("Add Saved Login", color = Color(0xFFF4F4F6), fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = domainInput,
+                        onValueChange = { domainInput = it },
+                        label = { Text("Domain (e.g. google.com)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = usernameInput,
+                        onValueChange = { usernameInput = it },
+                        label = { Text("Username / Email") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = { passwordInput = it },
+                        label = { Text("Password") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (domainInput.isNotBlank() && passwordInput.isNotBlank()) {
+                            onInsertPassword(
+                                PasswordEntity(
+                                    domain = domainInput.trim().lowercase(),
+                                    url = "https://${domainInput.trim()}",
+                                    username = usernameInput.trim(),
+                                    password = passwordInput.trim()
+                                )
+                            )
+                            domainInput = ""
+                            usernameInput = ""
+                            passwordInput = ""
+                            showAddDialog = false
+                        }
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

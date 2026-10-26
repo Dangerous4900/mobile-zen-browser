@@ -135,6 +135,41 @@ interface ZenDao {
 
     @Query("DELETE FROM download_items")
     suspend fun clearAllDownloads()
+
+    // Offline Page Queries
+    @Query("SELECT * FROM offline_pages ORDER BY timestamp DESC")
+    fun getAllOfflinePages(): Flow<List<OfflinePageEntity>>
+
+    @Query("SELECT * FROM offline_pages WHERE id = :id LIMIT 1")
+    suspend fun getOfflinePageById(id: String): OfflinePageEntity?
+
+    @Query("SELECT * FROM offline_pages WHERE url = :url LIMIT 1")
+    suspend fun getOfflinePageByUrl(url: String): OfflinePageEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOfflinePage(page: OfflinePageEntity)
+
+    @Query("DELETE FROM offline_pages WHERE id = :id")
+    suspend fun deleteOfflinePage(id: String)
+
+    @Query("DELETE FROM offline_pages")
+    suspend fun clearAllOfflinePages()
+
+    // Password Manager Queries
+    @Query("SELECT * FROM passwords ORDER BY domain ASC, username ASC")
+    fun getAllPasswords(): Flow<List<PasswordEntity>>
+
+    @Query("SELECT * FROM passwords WHERE domain = :domain OR url LIKE '%' || :domain || '%'")
+    suspend fun getPasswordsForDomain(domain: String): List<PasswordEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPassword(password: PasswordEntity)
+
+    @Query("DELETE FROM passwords WHERE id = :id")
+    suspend fun deletePassword(id: String)
+
+    @Query("DELETE FROM passwords")
+    suspend fun clearAllPasswords()
 }
 
 @Database(
@@ -146,9 +181,11 @@ interface ZenDao {
         CustomSearchEngineEntity::class,
         HomeShortcutEntity::class,
         HistoryEntryEntity::class,
-        DownloadItemEntity::class
+        DownloadItemEntity::class,
+        OfflinePageEntity::class,
+        PasswordEntity::class
     ],
-    version = 7,
+    version = 9,
     exportSchema = false
 )
 abstract class ZenDatabase : RoomDatabase() {

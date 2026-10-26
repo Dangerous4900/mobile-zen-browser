@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,22 +42,33 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudOff
+import com.example.data.OfflinePageEntity
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -92,22 +104,167 @@ import com.example.data.BlockedTrackerEvent
 import com.example.data.HomeScreenStyle
 import com.example.data.HomeShortcutEntity
 import com.example.data.TabEntity
+import com.example.data.PasswordEntity
 import com.example.privacy.ZenPrivacyEngine
 import com.example.ui.ActiveModalSheet
 import com.example.ui.ZenBrowserUiState
 import android.graphics.Canvas as AndroidCanvas
 import java.io.ByteArrayInputStream
 import kotlin.math.roundToInt
+private const val DESKTOP_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+class ZenBackgroundWebView(context: android.content.Context) : WebView(context) {
+
+    var isBackgroundPlayAllowed: () -> Boolean = { true }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        if (visibility != android.view.View.VISIBLE && isBackgroundPlayAllowed()) {
+            super.onWindowVisibilityChanged(android.view.View.VISIBLE)
+        } else {
+            super.onWindowVisibilityChanged(visibility)
+        }
+    }
+
+    override fun onVisibilityChanged(changedView: android.view.View, visibility: Int) {
+        if (visibility != android.view.View.VISIBLE && isBackgroundPlayAllowed()) {
+            super.onVisibilityChanged(changedView, android.view.View.VISIBLE)
+        } else {
+            super.onVisibilityChanged(changedView, visibility)
+        }
+    }
+
+    override fun dispatchWindowVisibilityChanged(visibility: Int) {
+        if (visibility != android.view.View.VISIBLE && isBackgroundPlayAllowed()) {
+            super.dispatchWindowVisibilityChanged(android.view.View.VISIBLE)
+        } else {
+            super.dispatchWindowVisibilityChanged(visibility)
+        }
+    }
+
+    override fun onPause() {
+        if (!isBackgroundPlayAllowed()) {
+            super.onPause()
+        }
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        if (!hasWindowFocus && isBackgroundPlayAllowed()) {
+            super.onWindowFocusChanged(true)
+        } else {
+            super.onWindowFocusChanged(hasWindowFocus)
+        }
+    }
+}
+
+object ZenWebViewManager {
+    private val pool = mutableMapOf<String, WebView>()
+
+    fun getOrCreate(context: android.content.Context, tabId: String, creator: (android.content.Context) -> WebView): Pair<WebView, Boolean> {
+        val existing = pool[tabId]
+        if (existing != null) {
+            (existing.parent as? android.view.ViewGroup)?.removeView(existing)
+            return Pair(existing, false)
+        }
+        val created = creator(context)
+        pool[tabId] = created
+        return Pair(created, true)
+    }
+
+    fun remove(tabId: String) {
+        val wv = pool.remove(tabId)
+        wv?.destroy()
+    }
+
+    fun get(tabId: String): WebView? = pool[tabId]
+
+    fun getAllWebViews(): Map<String, WebView> = pool
+
+    fun destroyAll() {
+        pool.values.forEach { it.destroy() }
+        pool.clear()
+    }
+}
 
 class ZenWebViewController {
     var webView: WebView? = null
+    var onGoBackFallback: (() -> Unit)? = null
+    var onGoForwardFallback: (() -> Unit)? = null
+    var onGoBackTriggered: (() -> Unit)? = null
+    var onGetBackHistoryFallback: (() -> List<com.example.data.HistoryNavEntry>)? = null
+    var onNavigateHistoryOffsetFallback: ((Int) -> Unit)? = null
+    var lastHistoryNavTime: Long = 0L
+
+    fun canGoBack(): Boolean {
+        return (webView?.canGoBack() == true) || onGoBackFallback != null
+    }
+
+    fun canGoForward(): Boolean {
+        return (webView?.canGoForward() == true) || onGoForwardFallback != null
+    }
 
     fun goBack() {
-        webView?.let { if (it.canGoBack()) it.goBack() }
+        lastHistoryNavTime = System.currentTimeMillis()
+        onGoBackTriggered?.invoke()
+        val wv = webView
+        if (wv != null && wv.canGoBack()) {
+            val list = wv.copyBackForwardList()
+            val curIdx = list.currentIndex
+            if (curIdx > 0) {
+                val curItem = list.getItemAtIndex(curIdx)
+                val prevItem = list.getItemAtIndex(curIdx - 1)
+                if (curIdx >= 2 && prevItem != null && curItem != null &&
+                    (prevItem.url == curItem.url || prevItem.url.trimEnd('/') == curItem.url.trimEnd('/'))
+                ) {
+                    wv.goBackOrForward(-2)
+                    return
+                }
+            }
+            wv.goBack()
+        } else {
+            onGoBackFallback?.invoke()
+        }
     }
 
     fun goForward() {
-        webView?.let { if (it.canGoForward()) it.goForward() }
+        lastHistoryNavTime = System.currentTimeMillis()
+        val wv = webView
+        if (wv != null && wv.canGoForward()) {
+            wv.goForward()
+        } else {
+            onGoForwardFallback?.invoke()
+        }
+    }
+
+    fun getBackHistory(): List<com.example.data.HistoryNavEntry> {
+        val wv = webView
+        val list = wv?.copyBackForwardList()
+        if (list != null && list.size > 0) {
+            val currentIndex = list.currentIndex
+            val result = mutableListOf<com.example.data.HistoryNavEntry>()
+            for (i in (currentIndex - 1) downTo 0) {
+                val item = list.getItemAtIndex(i) ?: continue
+                val steps = currentIndex - i
+                val rawTitle = item.title?.trim()
+                val rawUrl = item.url ?: ""
+                val title = if (!rawTitle.isNullOrBlank()) rawTitle else ZenPrivacyEngine.extractHostDisplay(rawUrl)
+                result.add(com.example.data.HistoryNavEntry(title = title, url = rawUrl, stepsBack = steps))
+            }
+            if (result.isNotEmpty()) return result
+        }
+        return onGetBackHistoryFallback?.invoke() ?: emptyList()
+    }
+
+    fun navigateToHistoryOffset(offset: Int) {
+        lastHistoryNavTime = System.currentTimeMillis()
+        onGoBackTriggered?.invoke()
+        val wv = webView
+        if (wv != null && wv.canGoBackOrForward(offset)) {
+            wv.goBackOrForward(offset)
+        } else if (offset == -1) {
+            goBack()
+        } else {
+            onNavigateHistoryOffsetFallback?.invoke(offset)
+        }
     }
 
     fun reload() {
@@ -175,13 +332,89 @@ class ZenWebViewController {
         }.getOrNull()
     }
 
+    var isMuted = false
+
     fun toggleMediaPlayPause() {
         webView?.evaluateJavascript(
             """
             (function() {
-                var media = document.querySelector('video, audio');
-                if (media) {
-                    if (media.paused) { media.play(); } else { media.pause(); }
+                window.__zenBypassPauseBlock = true;
+                var mediaElements = document.querySelectorAll('video, audio');
+                var anyPlaying = false;
+                mediaElements.forEach(function(media) {
+                    if (!media.paused && !media.ended) {
+                        anyPlaying = true;
+                    }
+                });
+                mediaElements.forEach(function(media) {
+                    if (anyPlaying) {
+                        media.pause();
+                        media.currentTime = 0;
+                        try {
+                            if (media.srcObject) {
+                                var tracks = media.srcObject.getTracks();
+                                tracks.forEach(function(t) { t.stop(); });
+                            }
+                        } catch(e) {}
+                    } else {
+                        media.play();
+                    }
+                });
+                var playBtn = document.querySelector('.ytp-play-button, [aria-label="Play"], [aria-label="Pause"], button.play, button.pause');
+                if (playBtn) {
+                    playBtn.click();
+                }
+                setTimeout(function() { window.__zenBypassPauseBlock = false; }, 300);
+            })();
+            """.trimIndent(),
+            null
+        )
+    }
+
+    fun toggleMediaMute() {
+        isMuted = !isMuted
+        webView?.evaluateJavascript(
+            """
+            (function() {
+                window.__zenIsMuted = ${isMuted};
+                var mediaElements = document.querySelectorAll('video, audio');
+                mediaElements.forEach(function(media) {
+                    media.muted = window.__zenIsMuted;
+                    if (window.__zenIsMuted) {
+                        media._prevVolume = media.volume;
+                        media.volume = 0;
+                    } else {
+                        media.volume = media._prevVolume !== undefined ? media._prevVolume : 1;
+                    }
+                });
+                if (window.__zenAudioContexts) {
+                    window.__zenAudioContexts.forEach(function(ctx) {
+                        if (window.__zenIsMuted) {
+                            if (ctx.state === 'running') ctx.suspend();
+                        } else {
+                            if (ctx.state === 'suspended') ctx.resume();
+                        }
+                    });
+                }
+                if (!window.__zenAudioContextHooked) {
+                    window.__zenAudioContextHooked = true;
+                    window.__zenAudioContexts = [];
+                    var origAudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (origAudioCtx) {
+                        window.AudioContext = function() {
+                            var ctx = new origAudioCtx();
+                            window.__zenAudioContexts.push(ctx);
+                            if (window.__zenIsMuted && ctx.state === 'running') {
+                                ctx.suspend();
+                            }
+                            return ctx;
+                        };
+                        window.AudioContext.prototype = origAudioCtx.prototype;
+                    }
+                }
+                var muteBtn = document.querySelector('.ytp-mute-button, [aria-label="Mute"], [aria-label="Unmute"], button.mute');
+                if (muteBtn) {
+                    muteBtn.click();
                 }
             })();
             """.trimIndent(),
@@ -190,10 +423,32 @@ class ZenWebViewController {
     }
 
     fun stopAllMedia() {
+        isMuted = false
         webView?.evaluateJavascript(
             """
             (function() {
-                document.querySelectorAll('video, audio').forEach(function(m) { m.pause(); });
+                window.__zenBypassPauseBlock = true;
+                window.__zenIsMuted = false;
+                var mediaElements = document.querySelectorAll('video, audio');
+                mediaElements.forEach(function(media) {
+                    media.muted = false;
+                    media.pause();
+                    media.currentTime = 0;
+                    try {
+                        if (media.srcObject) {
+                            var tracks = media.srcObject.getTracks();
+                            tracks.forEach(function(t) { t.stop(); });
+                        }
+                    } catch(e) {}
+                    media.src = '';
+                    media.load();
+                });
+                if (window.__zenAudioContexts) {
+                    window.__zenAudioContexts.forEach(function(ctx) {
+                        if (ctx.state === 'suspended') ctx.resume();
+                    });
+                }
+                setTimeout(function() { window.__zenBypassPauseBlock = false; }, 300);
             })();
             """.trimIndent(),
             null
@@ -218,6 +473,24 @@ class ZenWebViewController {
         CookieManager.getInstance().removeAllCookies(null)
         CookieManager.getInstance().flush()
     }
+
+    fun capturePageHtmlForOffline(onCaptured: (String) -> Unit) {
+        val wv = webView
+        if (wv != null) {
+            wv.evaluateJavascript("(function() { return document.documentElement.outerHTML; })();") { raw ->
+                val html = if (raw != null && raw != "null") {
+                    try {
+                        org.json.JSONTokener(raw).nextValue().toString()
+                    } catch (e: Exception) {
+                        raw.removeSurrounding("\"").replace("\\\"", "\"").replace("\\n", "\n")
+                    }
+                } else ""
+                onCaptured(html)
+            }
+        } else {
+            onCaptured("")
+        }
+    }
 }
 
 @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
@@ -241,11 +514,130 @@ fun ZenWebPaneView(
     onUpdateCustomTextPosition: (Float, Float) -> Unit,
     onOpenSheet: (ActiveModalSheet) -> Unit,
     onToggleSplitView: () -> Unit,
-    onOpenInNewTab: (url: String) -> Unit = {},
+    onOpenInNewTab: (url: String, forceSwitch: Boolean?) -> Unit = { _, _ -> },
     onOpenInPrivateTab: (url: String) -> Unit = {},
+    onOpenGlance: (url: String) -> Unit = {},
+    onUpdateSwitchToNewTabImmediately: (Boolean) -> Unit = {},
+    onPopTabHistory: (String, String?) -> String? = { _, _ -> null },
+    onPopTabForward: (String, String?) -> String? = { _, _ -> null },
+    onPopTabHistoryOffset: (String, Int, String?) -> String? = { _, _, _ -> null },
+    onGetTabHistoryEntries: (String) -> List<com.example.data.HistoryNavEntry> = { emptyList() },
+    onOpenSidebar: () -> Unit = {},
+    onSavePassword: (PasswordEntity) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    if (tab.url.startsWith("zen://search")) {
+        DisposableEffect(tab.id, isFocusedPane) {
+            if (isFocusedPane) {
+                controller.webView = null
+                controller.onGoBackFallback = {
+                    val prevUrl = onPopTabHistory(tab.id, tab.url)
+                    if (!prevUrl.isNullOrBlank() && prevUrl != tab.url) {
+                        onNavigateUrl(prevUrl)
+                    } else {
+                        onNavigateUrl("zen://home")
+                    }
+                }
+                onProgressChanged(100, true, false)
+            }
+            onDispose {
+                if (controller.webView == null) {
+                    controller.onGoBackFallback = null
+                }
+            }
+        }
+        val queryParam = runCatching {
+            Uri.parse(tab.url).getQueryParameter("q")
+        }.getOrNull() ?: "? : who is the main character"
+        ZenGoogleSearchResultView(
+            query = queryParam,
+            customAiOverviewText = uiState.sidebarConfig.customAiOverviewText,
+            customHeadline = uiState.sidebarConfig.fakeSearchHeadline,
+            customSnippet = uiState.sidebarConfig.fakeSearchSnippet,
+            onNavigateUrl = onNavigateUrl,
+            onOpenInGlance = onOpenGlance,
+            modifier = modifier
+        )
+        return
+    }
+
+    if (tab.url.startsWith("zen://offline")) {
+        val pageId = runCatching { Uri.parse(tab.url).getQueryParameter("id") }.getOrNull() ?: ""
+        val offlinePage = uiState.offlinePages.find { it.id == pageId }
+
+        DisposableEffect(tab.id, isFocusedPane) {
+            if (isFocusedPane) {
+                controller.webView = null
+                controller.onGoBackFallback = {
+                    val prevUrl = onPopTabHistory(tab.id, tab.url)
+                    if (!prevUrl.isNullOrBlank() && prevUrl != tab.url) {
+                        onNavigateUrl(prevUrl)
+                    } else {
+                        onNavigateUrl("zen://home")
+                    }
+                }
+                onProgressChanged(100, true, false)
+            }
+            onDispose {
+                if (controller.webView == null) {
+                    controller.onGoBackFallback = null
+                }
+            }
+        }
+
+        if (offlinePage != null) {
+            ZenOfflinePageRenderer(
+                page = offlinePage,
+                onLoadLiveSite = { onNavigateUrl(offlinePage.url) },
+                onNavigateUrl = onNavigateUrl,
+                modifier = modifier
+            )
+        } else {
+            Box(
+                modifier = modifier.fillMaxSize().background(Color(0xFF101014)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Default.CloudOff,
+                        contentDescription = null,
+                        tint = Color(0xFF71717A),
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Offline Page Not Found",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFFF4F4F6)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "This saved page may have been deleted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFA1A1AA)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { onNavigateUrl("zen://home") },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF272730))
+                    ) {
+                        Text("Return Home", color = Color(0xFFF4F4F6))
+                    }
+                }
+            }
+        }
+        return
+    }
+
     if (tab.url == "zen://home" || tab.url.isBlank() || tab.isUnloaded) {
+        DisposableEffect(tab.id, isFocusedPane) {
+            if (isFocusedPane) {
+                controller.webView = null
+                controller.onGoBackFallback = null
+                onProgressChanged(100, false, false)
+            }
+            onDispose {}
+        }
         ZenHomeStartPage(
             uiState = uiState,
             isPrivateTab = tab.isPrivate || (uiState.activeWorkspace?.isPrivate == true),
@@ -256,6 +648,7 @@ fun ZenWebPaneView(
             onDeleteHomeShortcut = onDeleteHomeShortcut,
             onUpdateCustomTextPosition = onUpdateCustomTextPosition,
             onOpenStartPageCustomizer = { onOpenSheet(ActiveModalSheet.START_PAGE_CUSTOMIZER) },
+            onOpenSidebar = onOpenSidebar,
             modifier = modifier
         )
         return
@@ -277,6 +670,11 @@ fun ZenWebPaneView(
     val currentCustomCss by rememberUpdatedState(customCss)
     val currentCustomJs by rememberUpdatedState(customJs)
     val currentReaderMode by rememberUpdatedState(readerMode)
+    val isDesktopMode = uiState.desktopModeTabIds.contains(tab.id)
+    val defaultMobileUa = remember(tab.id) {
+        val rawUa = WebSettings.getDefaultUserAgent(context) ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+        rawUa.replace("; wv)", ")").replace("Version/4.0 ", "")
+    }
 
 
 
@@ -303,112 +701,181 @@ fun ZenWebPaneView(
         mutableStateOf<WebChromeClient.CustomViewCallback?>(null)
     }
 
-    // Track URLs known to the WebView so asynchronous Room updates or HTTP redirects never trigger a reload loop
-    val knownWebViewUrls = remember(tab.id) { mutableSetOf(tab.url) }
-    var lastLoadedExternalUrl by remember(tab.id) { mutableStateOf(tab.url) }
+    // Track URLs and navigation states so asynchronous Room updates, link clicks, redirects, and back/forward never trigger a reload loop
+    val knownInternalUrls = remember(tab.id) { mutableSetOf(tab.url) }
+    var lastProcessedTabUrl by remember(tab.id) { mutableStateOf(tab.url) }
+    var lastVisitedInternalUrl by remember(tab.id) { mutableStateOf<String?>(null) }
     // Link long-press context menu state (Open in New Tab, Open in Private Tab, Copy Link Address, etc.)
     var longPressedLinkUrl by remember(tab.id) { mutableStateOf<String?>(null) }
+    var detectedLanguageCode by remember(tab.id, tab.url) { mutableStateOf<String?>(null) }
+    var showTranslateBanner by remember(tab.id, tab.url) { mutableStateOf(false) }
+    var detectedSavePassword by remember(tab.id, tab.url) { mutableStateOf<com.example.data.PasswordEntity?>(null) }
+    var detectedAutofillPassword by remember(tab.id, tab.url) { mutableStateOf<com.example.data.PasswordEntity?>(null) }
+    var showAutofillPrompt by remember(tab.id, tab.url) { mutableStateOf(false) }
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+    val scrollPositionsByUrl = remember(tab.id) { mutableMapOf<String, Int>() }
+    val scrollPrefs = remember {
+        context.getSharedPreferences("zen_scroll_prefs", android.content.Context.MODE_PRIVATE)
+    }
+    var isUserInteractingWithScroll by remember(tab.id) { mutableStateOf(false) }
 
-    val webView = remember(tab.id) {
-        var touchStartY = 0f
-        var touchStartX = 0f
-        var pullEngageY = 0f
-        var startedAtTopOfPage = false
-        var isPullingDownToRefresh = false
+    val (webView, isNewlyCreated) = remember(tab.id) {
+        ZenWebViewManager.getOrCreate(context, tab.id) { ctx ->
+            var touchStartY = 0f
+            var touchStartX = 0f
+            var pullEngageY = 0f
+            var startedAtTopOfPage = false
+            var isPullingDownToRefresh = false
+            var hasTriggeredHorizontalSwipe = false
 
-        WebView(context).apply {
-            isLongClickable = true
-            setOnLongClickListener { wv ->
-                val hitResult = (wv as? WebView)?.hitTestResult
-                if (hitResult != null) {
-                    val linkUrl = when (hitResult.type) {
-                        WebView.HitTestResult.SRC_ANCHOR_TYPE,
-                        WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> hitResult.extra
-                        else -> null
+            ZenBackgroundWebView(ctx).apply {
+                isBackgroundPlayAllowed = { currentUiState.sidebarConfig.backgroundPlayEnabled }
+                isLongClickable = true
+                setOnLongClickListener { wv ->
+                    val hitResult = (wv as? WebView)?.hitTestResult
+                    if (hitResult != null) {
+                        val linkUrl = when (hitResult.type) {
+                            WebView.HitTestResult.SRC_ANCHOR_TYPE,
+                            WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> hitResult.extra
+                            else -> null
+                        }
+                        if (!linkUrl.isNullOrBlank()) {
+                            longPressedLinkUrl = linkUrl
+                            return@setOnLongClickListener true
+                        }
                     }
-                    if (!linkUrl.isNullOrBlank()) {
-                        longPressedLinkUrl = linkUrl
-                        return@setOnLongClickListener true
+                    false
+                }
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+                isFocusable = true
+                isFocusableInTouchMode = true
+                isScrollbarFadingEnabled = true
+                overScrollMode = android.view.View.OVER_SCROLL_ALWAYS
+                setOnScrollChangeListener { _, _, _, scrollY, _ ->
+                    val url = this.url ?: tab.url
+                    if (url.isNotBlank() && scrollY > 0) {
+                        scrollPositionsByUrl[url] = scrollY
+                        scrollPositionsByUrl[url.substringBefore('#').trimEnd('/')] = scrollY
+                        scrollPrefs.edit().putInt("scroll_" + url.hashCode(), scrollY).apply()
                     }
                 }
-                false
-            }
-            layoutParams = android.view.ViewGroup.LayoutParams(
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
-            isFocusable = true
-            isFocusableInTouchMode = true
-            isScrollbarFadingEnabled = true
-            overScrollMode = android.view.View.OVER_SCROLL_ALWAYS
-            setOnTouchListener { v, event ->
-                val wv = v as? WebView ?: return@setOnTouchListener false
-                when (event.actionMasked) {
-                    android.view.MotionEvent.ACTION_DOWN -> {
-                        touchStartY = event.rawY
-                        touchStartX = event.rawX
-                        pullEngageY = event.rawY
-                        startedAtTopOfPage = (wv.scrollY <= 8 && !wv.canScrollVertically(-1))
-                        isPullingDownToRefresh = false
-                        isPullingGestureActive = false
+                setOnTouchListener { v, event ->
+                    val wv = v as? WebView ?: return@setOnTouchListener false
+                    if (currentUiState.isInPictureInPictureMode) {
+                        return@setOnTouchListener false
                     }
-                    android.view.MotionEvent.ACTION_MOVE -> {
-                        if (isPullingDownToRefresh) {
-                            // Once the pull-down refresh gesture is engaged, keep holding it!
-                            // It will NEVER disappear until the user lets go of the screen, and follows slow pulls up/down smoothly.
-                            isPullingGestureActive = true
-                            val rawPull = (event.rawY - pullEngageY).coerceAtLeast(10f)
-                            pullDownDistancePx = (rawPull * 0.58f).coerceIn(10f, pullRefreshThresholdPx * 1.65f)
-                            // Consume the touch event so WebView doesn't bounce/overscroll or cancel the hold
-                            return@setOnTouchListener true
-                        } else {
-                            val isAtTopNow = (wv.scrollY <= 8 && !wv.canScrollVertically(-1))
-                            if (!startedAtTopOfPage && isAtTopNow) {
-                                // User scrolled up to the very top while holding finger down — anchor from here
-                                startedAtTopOfPage = true
-                                touchStartY = event.rawY
-                                touchStartX = event.rawX
-                            } else if (startedAtTopOfPage && !isAtTopNow) {
-                                startedAtTopOfPage = false
-                            }
+                    val densityMetrics = ctx.resources.displayMetrics
+                    val edgeThresholdPx = 28f * densityMetrics.density
+                    val screenWidthPx = densityMetrics.widthPixels.toFloat()
 
-                            if (startedAtTopOfPage && isAtTopNow) {
-                                val dy = event.rawY - touchStartY
-                                val dx = kotlin.math.abs(event.rawX - touchStartX)
-                                if (dy > 12f && dy > dx * 1.15f) {
-                                    isPullingDownToRefresh = true
-                                    isPullingGestureActive = true
-                                    pullEngageY = event.rawY - 12f
-                                    val rawPull = (event.rawY - pullEngageY).coerceAtLeast(10f)
-                                    pullDownDistancePx = (rawPull * 0.58f).coerceIn(10f, pullRefreshThresholdPx * 1.65f)
-                                    return@setOnTouchListener true
+                    when (event.actionMasked) {
+                        android.view.MotionEvent.ACTION_DOWN -> {
+                            isUserInteractingWithScroll = true
+                            touchStartY = event.rawY
+                            touchStartX = event.rawX
+                            pullEngageY = event.rawY
+                            startedAtTopOfPage = (wv.scrollY <= 8 && !wv.canScrollVertically(-1))
+                            isPullingDownToRefresh = false
+                            isPullingGestureActive = false
+                            hasTriggeredHorizontalSwipe = false
+                        }
+                        android.view.MotionEvent.ACTION_MOVE -> {
+                            isUserInteractingWithScroll = true
+                            if (isPullingDownToRefresh) {
+                                isPullingGestureActive = true
+                                val rawPull = (event.rawY - pullEngageY).coerceAtLeast(10f)
+                                pullDownDistancePx = (rawPull * 0.58f).coerceIn(10f, pullRefreshThresholdPx * 1.65f)
+                                return@setOnTouchListener true
+                            } else {
+                                val isAtTopNow = (wv.scrollY <= 8 && !wv.canScrollVertically(-1))
+                                if (!startedAtTopOfPage && isAtTopNow) {
+                                    startedAtTopOfPage = true
+                                    touchStartY = event.rawY
+                                    touchStartX = event.rawX
+                                } else if (startedAtTopOfPage && !isAtTopNow) {
+                                    startedAtTopOfPage = false
+                                }
+
+                                if (startedAtTopOfPage && isAtTopNow) {
+                                    val dy = event.rawY - touchStartY
+                                    val dx = kotlin.math.abs(event.rawX - touchStartX)
+                                    if (dy > 16f && dy > dx * 1.25f) {
+                                        isPullingDownToRefresh = true
+                                        isPullingGestureActive = true
+                                        pullEngageY = event.rawY - 16f
+                                        val rawPull = (event.rawY - pullEngageY).coerceAtLeast(10f)
+                                        pullDownDistancePx = (rawPull * 0.58f).coerceIn(10f, pullRefreshThresholdPx * 1.65f)
+                                        return@setOnTouchListener true
+                                    }
                                 }
                             }
                         }
-                    }
-                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                        val wasPulling = isPullingDownToRefresh
-                        isPullingDownToRefresh = false
-                        isPullingGestureActive = false
-                        startedAtTopOfPage = false
-                        if (wasPulling) {
-                            if (pullDownDistancePx >= pullRefreshThresholdPx) {
-                                isPullRefreshing = true
-                                pullDownDistancePx = pullRefreshThresholdPx * 0.78f
-                                wv.reload()
+                        android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                            wv.postDelayed({ isUserInteractingWithScroll = false }, 350)
+                            val wasPulling = isPullingDownToRefresh
+                            isPullingDownToRefresh = false
+                            isPullingGestureActive = false
+                            startedAtTopOfPage = false
+                            if (wasPulling) {
+                                if (pullDownDistancePx >= pullRefreshThresholdPx) {
+                                    isPullRefreshing = true
+                                    pullDownDistancePx = pullRefreshThresholdPx * 0.78f
+                                    wv.reload()
+                                } else {
+                                    isPullRefreshing = false
+                                    pullDownDistancePx = 0f
+                                }
+                                return@setOnTouchListener true
                             } else {
-                                isPullRefreshing = false
+                                val finalDx = event.rawX - touchStartX
+                                val finalDy = event.rawY - touchStartY
+                                val absFinalDx = kotlin.math.abs(finalDx)
+                                val absFinalDy = kotlin.math.abs(finalDy)
+                                val startedFromLeftEdge = touchStartX <= edgeThresholdPx
+                                val startedFromRightEdge = touchStartX >= (screenWidthPx - edgeThresholdPx)
+
+                                if ((startedFromLeftEdge || startedFromRightEdge) && absFinalDx > 60f && absFinalDx > absFinalDy * 1.35f) {
+                                    hasTriggeredHorizontalSwipe = true
+                                    val swipeMode = currentUiState.sidebarConfig.horizontalSwipeMode
+                                    if (swipeMode == com.example.data.HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
+                                        if (finalDx < -60f && startedFromRightEdge) {
+                                            wv.post { onOpenSidebar() }
+                                            return@setOnTouchListener true
+                                        } else if (finalDx > 60f && startedFromLeftEdge) {
+                                            wv.post { controller.goBack() }
+                                            return@setOnTouchListener true
+                                        }
+                                    } else {
+                                        if (finalDx < -60f && startedFromRightEdge) {
+                                            wv.post { controller.goBack() }
+                                            return@setOnTouchListener true
+                                        } else if (finalDx > 60f && startedFromLeftEdge) {
+                                            wv.post { onOpenSidebar() }
+                                            return@setOnTouchListener true
+                                        }
+                                    }
+                                }
+                            }
+                            if (!isPullRefreshing) {
                                 pullDownDistancePx = 0f
                             }
-                            return@setOnTouchListener true
-                        } else if (!isPullRefreshing) {
-                            pullDownDistancePx = 0f
+                            hasTriggeredHorizontalSwipe = false
                         }
                     }
+                    false
                 }
-                false
+                setOnScrollChangeListener { v, _, scrollY, _, _ ->
+                val currentWv = v as? WebView ?: return@setOnScrollChangeListener
+                val currentUrl = currentWv.url ?: tab.url
+                if (currentUrl.isNotBlank() && currentUrl != "about:blank" && currentUrl != "zen://home") {
+                    if (scrollY > 0 || isUserInteractingWithScroll) {
+                        scrollPositionsByUrl[currentUrl] = scrollY
+                    }
+                }
             }
             settings.apply {
                 javaScriptEnabled = true
@@ -427,16 +894,11 @@ fun ZenWebPaneView(
                 displayZoomControls = false
                 setSupportMultipleWindows(false)
                 cacheMode = WebSettings.LOAD_DEFAULT
-                // Clean standard Mobile Chrome User-Agent without "; wv" so websites & video players serve standard mobile web
-                val rawUa = userAgentString ?: ""
-                if (rawUa.isNotBlank()) {
-                    userAgentString = rawUa
-                        .replace("; wv)", ")")
-                        .replace("Version/4.0 ", "")
-                }
+                userAgentString = if (isDesktopMode) DESKTOP_USER_AGENT else defaultMobileUa
             }
             CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, !privacyCfg.blockThirdPartyCookies)
+            val blockCookies = privacyCfg.blockThirdPartyCookies || privacyCfg.adBlockerLevel == com.example.data.AdBlockerLevel.HIGH
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, !blockCookies)
 
             addJavascriptInterface(
                 object {
@@ -444,7 +906,7 @@ fun ZenWebPaneView(
                     fun onMediaUpdate(isPlaying: Boolean, title: String, host: String) {
                         post {
                             onMediaStateChanged(
-                                true,
+                                isPlaying,
                                 isPlaying,
                                 title.ifBlank { tab.title },
                                 host.ifBlank { ZenPrivacyEngine.extractHostDisplay(tab.url) },
@@ -462,17 +924,108 @@ fun ZenWebPaneView(
                 },
                 "ZenMediaBridge"
             )
+
+            addJavascriptInterface(
+                object {
+                    @JavascriptInterface
+                    fun onSavePassword(domain: String, pageUrl: String, user: String, pass: String) {
+                        post {
+                            if (domain.isNotBlank() && pass.isNotBlank()) {
+                                detectedSavePassword = PasswordEntity(
+                                    id = "pwd_${java.util.UUID.randomUUID().toString().take(8)}",
+                                    domain = domain,
+                                    url = pageUrl.ifBlank { tab.url },
+                                    username = user,
+                                    password = pass
+                                )
+                            }
+                        }
+                    }
+                },
+                "ZenAutofillBridge"
+            )
         }
     }
+}
 
-    DisposableEffect(webView, isFocusedPane) {
+    val currentTabUrl by rememberUpdatedState(tab.url)
+    DisposableEffect(webView, isFocusedPane, tab.id) {
         if (isFocusedPane) {
             controller.webView = webView
+            controller.onGoBackTriggered = {
+                isUserInteractingWithScroll = false
+                val wv = controller.webView
+                val curUrl = wv?.url ?: currentTabUrl
+                val curY = wv?.scrollY ?: 0
+                if (curUrl.isNotBlank() && curY > 0) {
+                    scrollPositionsByUrl[curUrl] = curY
+                    scrollPositionsByUrl[curUrl.substringBefore('#').trimEnd('/')] = curY
+                    scrollPrefs.edit().putInt("scroll_" + curUrl.hashCode(), curY).apply()
+                }
+            }
+            controller.onGoBackFallback = {
+                val wvUrl = controller.webView?.url
+                val activeUrl = if (!wvUrl.isNullOrBlank()) wvUrl else currentTabUrl
+                val prevUrl = onPopTabHistory(tab.id, activeUrl)
+                if (!prevUrl.isNullOrBlank() && prevUrl != activeUrl) {
+                    lastProcessedTabUrl = prevUrl
+                    controller.webView?.loadUrl(prevUrl)
+                    onNavigateUrl(prevUrl)
+                }
+            }
+            controller.onGoForwardFallback = {
+                val wvUrl = controller.webView?.url
+                val activeUrl = if (!wvUrl.isNullOrBlank()) wvUrl else currentTabUrl
+                val nextUrl = onPopTabForward(tab.id, activeUrl)
+                if (!nextUrl.isNullOrBlank() && nextUrl != activeUrl) {
+                    lastProcessedTabUrl = nextUrl
+                    controller.webView?.loadUrl(nextUrl)
+                    onNavigateUrl(nextUrl)
+                }
+            }
+            controller.onNavigateHistoryOffsetFallback = { offset ->
+                val wvUrl = controller.webView?.url
+                val activeUrl = if (!wvUrl.isNullOrBlank()) wvUrl else currentTabUrl
+                val targetUrl = onPopTabHistoryOffset(tab.id, offset, activeUrl)
+                if (!targetUrl.isNullOrBlank() && targetUrl != activeUrl) {
+                    lastProcessedTabUrl = targetUrl
+                    controller.webView?.loadUrl(targetUrl)
+                    onNavigateUrl(targetUrl)
+                }
+            }
+            controller.onGetBackHistoryFallback = {
+                onGetTabHistoryEntries(tab.id)
+            }
         }
         onDispose {
             if (controller.webView === webView) {
                 controller.webView = null
+                controller.onGoBackFallback = null
+                controller.onGoForwardFallback = null
+                controller.onGoBackTriggered = null
+                controller.onNavigateHistoryOffsetFallback = null
+                controller.onGetBackHistoryFallback = null
             }
+        }
+    }
+
+    val restoreScrollForUrl: (WebView?, String?) -> Unit = { wv, targetUrl ->
+        val url = targetUrl?.takeIf { it.isNotBlank() } ?: wv?.url ?: currentTabUrl
+        val inMemY = scrollPositionsByUrl[url] ?: scrollPositionsByUrl[url.substringBefore('#').trimEnd('/')]
+        val savedY = scrollPrefs.getInt("scroll_" + url.hashCode(), 0)
+        val targetY = if (inMemY != null && inMemY > 0) inMemY else savedY
+        if (targetY > 0 && wv != null) {
+            wv.post {
+                if (!isUserInteractingWithScroll) {
+                    wv.scrollTo(0, targetY)
+                }
+            }
+            wv.postDelayed({
+                if (!isUserInteractingWithScroll && wv.scrollY < (targetY * 0.7f).toInt()) {
+                    wv.scrollTo(0, targetY)
+                    wv.evaluateJavascript("window.scrollTo({top: $targetY, behavior: 'instant'});", null)
+                }
+            }, 300)
         }
     }
 
@@ -496,6 +1049,25 @@ fun ZenWebPaneView(
         }
     }
 
+    LaunchedEffect(isDesktopMode) {
+        val targetUa = if (isDesktopMode) DESKTOP_USER_AGENT else defaultMobileUa
+        if (webView.settings.userAgentString != targetUa) {
+            webView.settings.userAgentString = targetUa
+            webView.settings.useWideViewPort = true
+            webView.settings.loadWithOverviewMode = true
+            if (isDesktopMode) {
+                val script = ZenPrivacyEngine.buildDesktopModeSpoofScript(true)
+                if (script.isNotBlank()) {
+                    webView.evaluateJavascript(script, null)
+                }
+            }
+            webView.evaluateJavascript(ZenPrivacyEngine.buildDesktopWebExtensionShimScript(), null)
+            if (tab.url.startsWith("http://") || tab.url.startsWith("https://")) {
+                webView.reload()
+            }
+        }
+    }
+
     val mediaAndAmoScript = remember {
         """
         (function() {
@@ -503,7 +1075,7 @@ fun ZenWebPaneView(
             if (oldFab) { oldFab.remove(); }
 
             function enhanceVideos() {
-                document.querySelectorAll('video').forEach(function(v) {
+                document.querySelectorAll('video, audio').forEach(function(v) {
                     if (!v.hasAttribute('playsinline')) {
                         v.setAttribute('playsinline', '');
                     }
@@ -516,47 +1088,153 @@ fun ZenWebPaneView(
 
             if (!window.__zenMediaHooked) {
                 window.__zenMediaHooked = true;
+
+                var userInteractionTime = Date.now();
+                document.addEventListener('click', function() { userInteractionTime = Date.now(); }, true);
+                document.addEventListener('touchstart', function() { userInteractionTime = Date.now(); }, true);
+                document.addEventListener('keydown', function() { userInteractionTime = Date.now(); }, true);
+
+                // Background Audio/Video playback: prevent web pages from pausing when backgrounded, switching tabs, or screen off
+                try {
+                    var origAddEventListener = EventTarget.prototype.addEventListener;
+                    EventTarget.prototype.addEventListener = function(type, listener, options) {
+                        if (type === 'visibilitychange' || type === 'webkitvisibilitychange' || type === 'pagehide' || type === 'blur' || type === 'focusout' || type === 'freeze') {
+                            return;
+                        }
+                        return origAddEventListener.call(this, type, listener, options);
+                    };
+                } catch(e) {}
+
+                try {
+                    Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
+                    Object.defineProperty(document, 'webkitHidden', { get: function() { return false; }, configurable: true });
+                    Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
+                    Object.defineProperty(document, 'webkitVisibilityState', { get: function() { return 'visible'; }, configurable: true });
+                    window.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+                    document.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+                    window.addEventListener('pagehide', function(e) { e.stopImmediatePropagation(); }, true);
+                    window.addEventListener('blur', function(e) { e.stopImmediatePropagation(); }, true);
+                } catch(e) {}
+
+                try {
+                    window.open = function() { return null; };
+                    window.showModalDialog = function() { return null; };
+                } catch(e) {}
+
+                try {
+                    var origPause = HTMLMediaElement.prototype.pause;
+                    HTMLMediaElement.prototype.pause = function() {
+                        if (window.__zenBypassPauseBlock) {
+                            return origPause.apply(this, arguments);
+                        }
+                        var stack = new Error().stack || '';
+                        var timeSinceInteraction = Date.now() - userInteractionTime;
+                        if (timeSinceInteraction > 900 || stack.indexOf('visibility') !== -1 || stack.indexOf('blur') !== -1 || stack.indexOf('pagehide') !== -1 || document.hidden) {
+                            return;
+                        }
+                        return origPause.apply(this, arguments);
+                    };
+                } catch(e) {}
+
+                function checkAndUpdateMediaState() {
+                    var allMedia = document.querySelectorAll('video, audio');
+                    var isPlaying = false;
+                    allMedia.forEach(function(m) {
+                        if (!m.hasAttribute('playsinline')) m.setAttribute('playsinline', '');
+                        if (!m.hasAttribute('webkit-playsinline')) m.setAttribute('webkit-playsinline', '');
+                        if (!m.paused && m.currentTime > 0 && !m.ended) {
+                            isPlaying = true;
+                        }
+                    });
+                    if (window.ZenMediaBridge) {
+                        window.ZenMediaBridge.onMediaUpdate(isPlaying, document.title || '', location.hostname || '');
+                    }
+                }
+
+                setInterval(checkAndUpdateMediaState, 1000);
+
                 document.addEventListener('loadedmetadata', function(e) {
-                    if (e.target && e.target.tagName === 'VIDEO') {
+                    if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
                         enhanceVideos();
                     }
                 }, true);
-                document.addEventListener('play', function(e) {
-                    if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
-                        if (window.ZenMediaBridge) {
-                            window.ZenMediaBridge.onMediaUpdate(true, document.title || '', location.hostname || '');
-                        }
-                    }
-                }, true);
-                document.addEventListener('pause', function(e) {
-                    if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
-                        if (window.ZenMediaBridge) {
-                            window.ZenMediaBridge.onMediaUpdate(false, document.title || '', location.hostname || '');
-                        }
-                    }
-                }, true);
+                document.addEventListener('play', checkAndUpdateMediaState, true);
+                document.addEventListener('pause', checkAndUpdateMediaState, true);
+                document.addEventListener('timeupdate', checkAndUpdateMediaState, true);
             }
 
             if (location.hostname.indexOf('addons.mozilla.org') !== -1 && !window.__zenAmoHooked) {
                 window.__zenAmoHooked = true;
                 document.addEventListener('click', function(e) {
-                    var target = e.target ? e.target.closest('a.AMInstallButton-button, a[href*=".xpi"], button.AMInstallButton-button') : null;
+                    var target = e.target ? e.target.closest('a.AMInstallButton-button, a[href*=".xpi"], button.AMInstallButton-button, .InstallButtonWrapper a, .InstallButtonWrapper button, .AMOPrompt .Button, a.Button--action') : null;
                     if (target && window.ZenMediaBridge && window.ZenMediaBridge.onInstallAmoExtension) {
                         e.preventDefault();
                         e.stopPropagation();
                         window.ZenMediaBridge.onInstallAmoExtension(location.href, document.title || '');
-                        target.textContent = 'Installed in Zen';
+                        target.textContent = '✓ Installed in Zen';
                     }
                 }, true);
             }
+
+            if ((location.hostname.indexOf('greasyfork.org') !== -1 || location.hostname.indexOf('openuserjs.org') !== -1) && !window.__zenUserscriptHooked) {
+                window.__zenUserscriptHooked = true;
+                document.addEventListener('click', function(e) {
+                    var target = e.target ? e.target.closest('a[href*=".user.js"], a.install-link') : null;
+                    if (target && window.ZenMediaBridge && window.ZenMediaBridge.onInstallAmoExtension) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        window.ZenMediaBridge.onInstallAmoExtension(target.href || location.href, document.title || '');
+                        target.textContent = '✓ Installed in Zen';
+                    }
+                }, true);
+            }
+
+            // Form password listener for local password saving & autofill
+            if (!window.__zenAutofillHooked) {
+                window.__zenAutofillHooked = true;
+                function attachAutofillListeners() {
+                    try {
+                        var forms = document.forms || [];
+                        for (var i = 0; i < forms.length; i++) {
+                            var f = forms[i];
+                            if (!f.__zenHooked) {
+                                f.__zenHooked = true;
+                                f.addEventListener('submit', function(e) {
+                                    var passInput = this.querySelector('input[type="password"]');
+                                    if (passInput && passInput.value) {
+                                        var userInput = this.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="login"]');
+                                        var userVal = userInput ? userInput.value || '' : '';
+                                        var passVal = passInput.value;
+                                        if (window.ZenAutofillBridge) {
+                                            window.ZenAutofillBridge.onSavePassword(location.hostname || '', location.href || '', userVal, passVal);
+                                        }
+                                    }
+                                }, true);
+                            }
+                        }
+                    } catch(e) {}
+                }
+                attachAutofillListeners();
+                document.addEventListener('DOMContentLoaded', attachAutofillListeners);
+                document.addEventListener('change', attachAutofillListeners, true);
+            }
+
+            // Automatic scroll position restoration for in-page link navigation & browser history
+            try {
+                if ('scrollRestoration' in history) {
+                    history.scrollRestoration = 'auto';
+                }
+            } catch(e) {}
         })();
         """.trimIndent()
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        AndroidView(
+        androidx.compose.runtime.key(tab.id) {
+            AndroidView(
             factory = {
                 webView.apply {
+                    (parent as? android.view.ViewGroup)?.removeView(this)
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(
                             view: WebView?,
@@ -564,43 +1242,52 @@ fun ZenWebPaneView(
                         ): WebResourceResponse? {
                             val reqUrl = request?.url?.toString() ?: return null
                             val isMainFrame = request.isForMainFrame
-                            // Block third-party ad & tracker requests when either Privacy Shield OR uBlock Origin is active
+                            val lowerUrl = reqUrl.lowercase()
+
+                            // Whitelist essential site media streams, CDNs, fonts, and YouTube resources so video/page loading is smooth
+                            val isEssentialSiteResource = lowerUrl.contains("googlevideo.com") ||
+                                lowerUrl.contains("ytimg.com") ||
+                                lowerUrl.contains("fonts.gstatic.com") ||
+                                lowerUrl.contains("fonts.googleapis.com") ||
+                                (lowerUrl.contains("youtube.com") &&
+                                    !lowerUrl.contains("/pagead/") &&
+                                    !lowerUrl.contains("doubleclick") &&
+                                    !lowerUrl.contains("/api/stats/ads"))
+                            if (isEssentialSiteResource) {
+                                return super.shouldInterceptRequest(view, request)
+                            }
+
+                            val adLevel = currentPrivacyCfg.adBlockerLevel
                             val isUblockActive = currentUiState.firefoxExtensions.any {
                                 it.id == "ff_ublock_origin" && it.isInstalled && it.isEnabled
                             }
-                            if (!isMainFrame && (currentPrivacyCfg.blockTrackersAndAds || isUblockActive)) {
-                                val lowerUrl = reqUrl.lowercase()
-                                // First check if this request is a known ad or tracker endpoint
+                            val shouldBlockAds = adLevel != com.example.data.AdBlockerLevel.OFF || currentPrivacyCfg.blockTrackersAndAds || isUblockActive
+
+                            if (!isMainFrame && shouldBlockAds) {
                                 val blockedEvent = ZenPrivacyEngine.matchTrackerRequest(reqUrl)
-                                if (blockedEvent != null) {
-                                    view?.post { onTrackerBlocked(blockedEvent) }
-                                    val mimeType = if (reqUrl.contains(".js")) "application/javascript" else "text/plain"
-                                    return WebResourceResponse(
-                                        mimeType,
-                                        "utf-8",
-                                        ByteArrayInputStream(ByteArray(0))
-                                    )
-                                }
-                                // If uBlock Origin or ad blocking is active, intercept any ad server / ad path request
-                                if (ZenPrivacyEngine.isAdOrTrackerUrl(reqUrl)) {
-                                    val adEvent = BlockedTrackerEvent(
+                                val isAggressiveHigh = adLevel == com.example.data.AdBlockerLevel.HIGH && (
+                                    lowerUrl.contains("google-analytics.com") ||
+                                    lowerUrl.contains("googletagmanager.com") ||
+                                    lowerUrl.contains("/analytics") ||
+                                    lowerUrl.contains("/telemetry") ||
+                                    lowerUrl.contains("facebook.net/en_us/fbevents.js") ||
+                                    lowerUrl.contains("doubleclick.net") ||
+                                    lowerUrl.contains("scorecardresearch.com")
+                                )
+                                if (blockedEvent != null || ZenPrivacyEngine.isAdOrTrackerUrl(reqUrl) || isAggressiveHigh) {
+                                    val event = blockedEvent ?: BlockedTrackerEvent(
                                         domain = ZenPrivacyEngine.extractHostDisplay(reqUrl),
-                                        category = "Ad Network"
+                                        category = if (isAggressiveHigh) "Telemetry/Tracker" else "Ad Network"
                                     )
-                                    view?.post { onTrackerBlocked(adEvent) }
-                                    val mimeType = if (reqUrl.contains(".js")) "application/javascript" else "text/plain"
+                                    view?.post { onTrackerBlocked(event) }
+                                    val isJson = lowerUrl.contains("json") || lowerUrl.contains("/pagead/") || lowerUrl.contains("/api/stats/ads") || lowerUrl.contains("youtube.com")
+                                    val mimeType = if (isJson) "application/json" else if (reqUrl.contains(".js")) "application/javascript" else "text/plain"
+                                    val responseBody = if (isJson) "{}" else ""
                                     return WebResourceResponse(
                                         mimeType,
                                         "utf-8",
-                                        ByteArrayInputStream(ByteArray(0))
+                                        ByteArrayInputStream(responseBody.toByteArray(Charsets.UTF_8))
                                     )
-                                }
-                                // Preserve actual video streams & CDN scripts that did not match any ad/tracker rule
-                                val isEssentialMediaStream = lowerUrl.contains("googlevideo.com/videoplayback") &&
-                                    !lowerUrl.contains("&adformat=") &&
-                                    !lowerUrl.contains("&ctier=l")
-                                if (isEssentialMediaStream) {
-                                    return super.shouldInterceptRequest(view, request)
                                 }
                             }
                             return super.shouldInterceptRequest(view, request)
@@ -615,24 +1302,41 @@ fun ZenWebPaneView(
                             val isUblockActive = currentUiState.firefoxExtensions.any {
                                 it.id == "ff_ublock_origin" && it.isInstalled && it.isEnabled
                             }
-                            if ((currentPrivacyCfg.blockTrackersAndAds || isUblockActive) && !request.hasGesture()) {
-                                if (ZenPrivacyEngine.isAdOrTrackerUrl(targetUrl)) {
+                            val shouldBlockAdRedirects = currentPrivacyCfg.adBlockerLevel != com.example.data.AdBlockerLevel.OFF || currentPrivacyCfg.blockTrackersAndAds || isUblockActive
+                            if (shouldBlockAdRedirects) {
+                                if (ZenPrivacyEngine.isAdOrPopupRedirect(targetUrl)) {
                                     val adRedirect = BlockedTrackerEvent(
                                         domain = ZenPrivacyEngine.extractHostDisplay(targetUrl),
-                                        category = "Ad Network"
+                                        category = "Blocked Ad Popup Redirect"
                                     )
                                     view?.post { onTrackerBlocked(adRedirect) }
                                     return true
                                 }
                             }
-                            // Intercept direct .xpi Firefox extension downloads and install them into Zen
-                            if (targetUrl.lowercase().contains(".xpi")) {
+                            // Intercept direct .xpi, .crx, or .user.js desktop extension downloads and install them into Zen
+                            if (targetUrl.lowercase().contains(".xpi") || targetUrl.lowercase().contains(".crx") ||
+                                targetUrl.lowercase().endsWith(".user.js") || targetUrl.lowercase().contains(".user.js?")
+                            ) {
                                 onInstallExtensionFromAmo(view?.url ?: targetUrl, view?.title)
                                 return true
                             }
                             if (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) {
-                                knownWebViewUrls.add(targetUrl)
-                                lastLoadedExternalUrl = targetUrl
+                                val curUrl = view?.url ?: tab.url
+                                val curY = view?.scrollY ?: 0
+                                if (curUrl.isNotBlank() && curY > 0) {
+                                    scrollPositionsByUrl[curUrl] = curY
+                                }
+                                if (currentUiState.sidebarConfig.openLinksInGlanceAutomatically && request?.hasGesture() == true) {
+                                    onOpenGlance(targetUrl)
+                                    return true
+                                }
+                                if (currentUiState.sidebarConfig.openInNewTab && request?.hasGesture() == true) {
+                                    val forceSwitch = if (currentUiState.sidebarConfig.switchToNewTabImmediately) true else false
+                                    onOpenInNewTab(targetUrl, forceSwitch)
+                                    return true
+                                }
+                                knownInternalUrls.add(targetUrl)
+                                lastVisitedInternalUrl = targetUrl
                                 // Let WebView natively handle all HTTP/HTTPS navigations, redirects, and OAuth/login flows without interrupting
                                 return false
                             }
@@ -651,20 +1355,37 @@ fun ZenWebPaneView(
                         ) {
                             super.doUpdateVisitedHistory(view, url, isReload)
                             if (!url.isNullOrBlank() && url != "about:blank") {
-                                knownWebViewUrls.add(url)
-                                lastLoadedExternalUrl = url
+                                knownInternalUrls.add(url)
+                                lastVisitedInternalUrl = url
                                 onPageVisited(url, view?.title)
+                                restoreScrollForUrl(view, url)
                             }
                             if (isFocusedPane && view != null) {
-                                onProgressChanged(view.progress, view.canGoBack(), view.canGoForward())
+                                val canBackEffective = view.canGoBack() || (tab.url != "zen://home" && tab.url.isNotBlank())
+                                onProgressChanged(view.progress, canBackEffective, view.canGoForward())
                             }
+                        }
+
+                        override fun onPageCommitVisible(view: WebView?, url: String?) {
+                            super.onPageCommitVisible(view, url)
+                            if (!url.isNullOrBlank() && url != "about:blank") {
+                                restoreScrollForUrl(view, url)
+                            }
+                            if (isDesktopMode) {
+                                val desktopScript = ZenPrivacyEngine.buildDesktopModeSpoofScript(true)
+                                if (desktopScript.isNotBlank()) {
+                                    view?.evaluateJavascript(desktopScript, null)
+                                }
+                            }
+                            view?.evaluateJavascript(ZenPrivacyEngine.buildDesktopWebExtensionShimScript(), null)
                         }
 
                         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                             super.onPageStarted(view, url, favicon)
+                            isUserInteractingWithScroll = false
                             if (!url.isNullOrBlank() && url != "about:blank") {
-                                knownWebViewUrls.add(url)
-                                lastLoadedExternalUrl = url
+                                knownInternalUrls.add(url)
+                                lastVisitedInternalUrl = url
                                 onPageVisited(url, view?.title)
                             }
                             // Inject ad-blocking & anti-fingerprinting script early at page start using latest dynamic payloads
@@ -679,8 +1400,17 @@ fun ZenWebPaneView(
                                 customJsPayload = dynamicJs
                             )
                             view?.evaluateJavascript(earlyScript, null)
+                            view?.evaluateJavascript(mediaAndAmoScript, null)
+                            view?.evaluateJavascript(ZenPrivacyEngine.buildDesktopWebExtensionShimScript(), null)
+                            if (isDesktopMode) {
+                                val desktopScript = ZenPrivacyEngine.buildDesktopModeSpoofScript(true)
+                                if (desktopScript.isNotBlank()) {
+                                    view?.evaluateJavascript(desktopScript, null)
+                                }
+                            }
                             if (isFocusedPane && view != null) {
-                                onProgressChanged(view.progress.coerceAtLeast(10), view.canGoBack(), view.canGoForward())
+                                val canBackEffective = view.canGoBack() || (tab.url != "zen://home" && tab.url.isNotBlank())
+                                onProgressChanged(view.progress.coerceAtLeast(10), canBackEffective, view.canGoForward())
                             }
                         }
 
@@ -692,9 +1422,10 @@ fun ZenWebPaneView(
                                 pullDownDistancePx = 0f
                             }
                             if (!url.isNullOrBlank() && url != "about:blank") {
-                                knownWebViewUrls.add(url)
-                                lastLoadedExternalUrl = url
+                                knownInternalUrls.add(url)
+                                lastVisitedInternalUrl = url
                                 onPageVisited(url, view?.title)
+                                restoreScrollForUrl(view, url)
                             }
                             val currentUrl = url ?: tab.url
                             val activeTab = tab.copy(url = currentUrl)
@@ -708,8 +1439,55 @@ fun ZenWebPaneView(
                             )
                             view?.evaluateJavascript(script, null)
                             view?.evaluateJavascript(mediaAndAmoScript, null)
+                            view?.evaluateJavascript(ZenPrivacyEngine.buildDesktopWebExtensionShimScript(), null)
+                            if (isDesktopMode) {
+                                val desktopScript = ZenPrivacyEngine.buildDesktopModeSpoofScript(true)
+                                if (desktopScript.isNotBlank()) {
+                                    view?.evaluateJavascript(desktopScript, null)
+                                }
+                            }
+
+                            // Detect webpage language for automatic translation prompt
+                            if (currentUrl.startsWith("http://") || currentUrl.startsWith("https://")) {
+                                view?.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        var lang = document.documentElement.lang || document.querySelector('meta[http-equiv="content-language"]')?.content || '';
+                                        if (!lang) {
+                                            var og = document.querySelector('meta[property="og:locale"]');
+                                            if (og) lang = og.content;
+                                        }
+                                        if (lang) {
+                                            lang = lang.replace(/[-_].*$/, '').toLowerCase();
+                                        }
+                                        return lang || '';
+                                    })();
+                                    """.trimIndent()
+                                ) { res ->
+                                    val detected = res?.trim()?.removeSurrounding("\"")?.lowercase() ?: ""
+                                    if (detected.isNotBlank() && detected != "null" && detected != "en") {
+                                        detectedLanguageCode = detected
+                                        showTranslateBanner = true
+                                    }
+                                }
+                            }
+
+                            if (currentUrl.startsWith("http://") || currentUrl.startsWith("https://")) {
+                                val currentDomain = ZenPrivacyEngine.extractHostDisplay(currentUrl)
+                                val matchingPassword = currentUiState.savedPasswords.find {
+                                    it.domain.equals(currentDomain, ignoreCase = true) || currentUrl.contains(it.domain, ignoreCase = true)
+                                }
+                                if (matchingPassword != null) {
+                                    detectedAutofillPassword = matchingPassword
+                                    showAutofillPrompt = true
+                                }
+                            }
+
+                            restoreScrollForUrl(view, currentUrl)
+
                             if (isFocusedPane && view != null) {
-                                onProgressChanged(100, view.canGoBack(), view.canGoForward())
+                                val canBackEffective = view.canGoBack() || (tab.url != "zen://home" && tab.url.isNotBlank())
+                                onProgressChanged(100, canBackEffective, view.canGoForward())
                             }
                         }
                     }
@@ -718,7 +1496,8 @@ fun ZenWebPaneView(
                         override fun onProgressChanged(view: WebView?, newProgress: Int) {
                             super.onProgressChanged(view, newProgress)
                             if (isFocusedPane && view != null) {
-                                onProgressChanged(newProgress, view.canGoBack(), view.canGoForward())
+                                val canBackEffective = view.canGoBack() || (tab.url != "zen://home" && tab.url.isNotBlank())
+                                onProgressChanged(newProgress, canBackEffective, view.canGoForward())
                             }
                         }
 
@@ -726,8 +1505,8 @@ fun ZenWebPaneView(
                             super.onReceivedTitle(view, title)
                             val currentUrl = view?.url ?: return
                             if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
-                                knownWebViewUrls.add(currentUrl)
-                                lastLoadedExternalUrl = currentUrl
+                                knownInternalUrls.add(currentUrl)
+                                lastVisitedInternalUrl = currentUrl
                                 onPageVisited(currentUrl, title)
                             }
                         }
@@ -754,6 +1533,15 @@ fun ZenWebPaneView(
                             fullscreenCustomViewCallback = null
                         }
 
+                        override fun onCreateWindow(
+                            view: WebView?,
+                            isDialog: Boolean,
+                            isUserGesture: Boolean,
+                            resultMsg: android.os.Message?
+                        ): Boolean {
+                            return false
+                        }
+
                         override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
                             request ?: return
                             val allowed = request.resources.filter {
@@ -769,31 +1557,37 @@ fun ZenWebPaneView(
                         }
                     }
 
-                    knownWebViewUrls.add(tab.url)
-                    lastLoadedExternalUrl = tab.url
-                    loadUrl(tab.url)
+                    if (isNewlyCreated) {
+                        knownInternalUrls.add(tab.url)
+                        lastProcessedTabUrl = tab.url
+                        loadUrl(tab.url)
+                    }
                 }
             },
             update = { view ->
-                // Only call loadUrl when tab.url was explicitly changed by the user from outside the WebView
-                // (e.g. URL bar or shortcut), and is NOT an internal redirect or SPA history update already known to this WebView
                 val target = tab.url
-                if (target != "zen://home" &&
-                    target.isNotBlank() &&
-                    target != lastLoadedExternalUrl &&
-                    target != view.url &&
-                    target != view.originalUrl &&
-                    !knownWebViewUrls.contains(target)
-                ) {
-                    knownWebViewUrls.add(target)
-                    lastLoadedExternalUrl = target
-                    view.loadUrl(target)
+                if (target != lastProcessedTabUrl) {
+                    lastProcessedTabUrl = target
+                    val currentWvUrl = view.url
+                    val isAlreadyShowing = (target == currentWvUrl) ||
+                        (target == view.originalUrl) ||
+                        (currentWvUrl != null && (target.trimEnd('/') == currentWvUrl.trimEnd('/')))
+                    if (!isAlreadyShowing && target != "zen://home" && target.isNotBlank()) {
+                        val curUrl = currentWvUrl ?: target
+                        val curY = view.scrollY
+                        if (curUrl.isNotBlank() && curY > 0) {
+                            scrollPositionsByUrl[curUrl] = curY
+                        }
+                        knownInternalUrls.add(target)
+                        view.loadUrl(target)
+                    }
                 }
             },
             modifier = Modifier
                 .fillMaxSize()
                 .testTag("zen_webview_${tab.id}")
         )
+        }
 
         // Top Pull-to-Refresh Indicator when user pulls down from the top-most position of a webpage:
         // Only shows a reload icon with smooth scale, alpha, drop-down, and rotation animations as you pull down,
@@ -913,43 +1707,405 @@ fun ZenWebPaneView(
             )
         }
 
-        // Link Long-Press Context Menu Overlay (Open in new tab, Open in private tab, Copy link, Share)
-        longPressedLinkUrl?.let { linkUrl ->
-            val hostDisplay = ZenPrivacyEngine.extractHostDisplay(linkUrl)
-            AlertDialog(
-                onDismissRequest = { longPressedLinkUrl = null },
-                containerColor = Color(0xFF141418),
-                shape = RoundedCornerShape(16.dp),
-                title = {
-                    Column {
-                        Text(
-                            text = "Link Options",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF4F4F6)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = linkUrl,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFA1A1AA),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
+        // Webpage Language Detection & Translation Menu (styled identically to the Side Panel with blur & transparency)
+        if (showTranslateBanner && detectedLanguageCode != null) {
+            val sidebarCfg = uiState.sidebarConfig
+            val isLiquidGlass = sidebarCfg.liquidGlassEnabled
+            val panelAlpha = if (isLiquidGlass) {
+                (sidebarCfg.sidebarOpacity * 0.85f).coerceIn(0.20f, 0.95f)
+            } else {
+                sidebarCfg.sidebarOpacity.coerceIn(0.40f, 1f)
+            }
+            val bannerShape = RoundedCornerShape(16.dp)
+            val bannerBorderBrush = if (isLiquidGlass) {
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.40f),
+                        Color(0xFF1E1E24).copy(alpha = panelAlpha),
+                        Color.White.copy(alpha = 0.16f)
+                    )
+                )
+            } else {
+                Brush.verticalGradient(
+                    colors = listOf(Color(0xFF3F3F46), Color(0xFF27272A))
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .align(Alignment.TopCenter)
+                    .testTag("zen_translate_banner")
+            ) {
+                Surface(
+                    shape = bannerShape,
+                    color = Color(0xFF0F0F14).copy(alpha = panelAlpha),
+                    border = BorderStroke(1.2.dp, bannerBorderBrush),
+                    shadowElevation = 16.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(bannerShape)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF34D399).copy(alpha = 0.18f),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Translate,
+                                    contentDescription = "Translate",
+                                    tint = Color(0xFF34D399),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Page is in ${getLanguageDisplayName(detectedLanguageCode)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFF4F4F6)
+                            )
+                            Text(
+                                text = "Translate this webpage to English?",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFA1A1AA)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                controller.launchTranslatorPanel()
+                                showTranslateBanner = false
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isLiquidGlass) Color.White.copy(alpha = 0.20f) else Color(0xFF27272A),
+                                contentColor = Color(0xFF34D399)
+                            ),
+                            border = BorderStroke(1.dp, Color(0xFF34D399).copy(alpha = 0.40f)),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("translate_page_action_button")
+                        ) {
+                            Text(
+                                text = "Translate",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = { showTranslateBanner = false },
+                            modifier = Modifier.size(28.dp).testTag("translate_dismiss_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss",
+                                tint = Color(0xFFA1A1AA),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
-                },
-                text = {
+                }
+            }
+        }
+
+        // Save Password Prompt Banner
+        detectedSavePassword?.let { pwd ->
+            val bannerShape = RoundedCornerShape(16.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .align(Alignment.TopCenter)
+                    .testTag("zen_save_password_banner")
+            ) {
+                Surface(
+                    shape = bannerShape,
+                    color = Color(0xFF0F0F14).copy(alpha = 0.95f),
+                    border = BorderStroke(1.2.dp, Color(0xFF60A5FA).copy(alpha = 0.6f)),
+                    shadowElevation = 16.dp,
+                    modifier = Modifier.fillMaxWidth().clip(bannerShape)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF60A5FA).copy(alpha = 0.18f),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Save Password",
+                                    tint = Color(0xFF60A5FA),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Save Password for ${pwd.domain}?",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFF4F4F6)
+                            )
+                            if (pwd.username.isNotBlank()) {
+                                Text(
+                                    text = "Account: ${pwd.username}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFA1A1AA)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                onSavePassword(pwd)
+                                detectedSavePassword = null
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF2563EB),
+                                contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("save_password_confirm_button")
+                        ) {
+                            Text(
+                                text = "Save",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = { detectedSavePassword = null },
+                            modifier = Modifier.size(28.dp).testTag("save_password_dismiss_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss",
+                                tint = Color(0xFFA1A1AA),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Autofill Password Suggestion Banner
+        if (showAutofillPrompt && detectedAutofillPassword != null && detectedSavePassword == null) {
+            val pwd = detectedAutofillPassword!!
+            val bannerShape = RoundedCornerShape(16.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .align(Alignment.TopCenter)
+                    .testTag("zen_autofill_password_banner")
+            ) {
+                Surface(
+                    shape = bannerShape,
+                    color = Color(0xFF0F0F14).copy(alpha = 0.95f),
+                    border = BorderStroke(1.2.dp, Color(0xFF34D399).copy(alpha = 0.6f)),
+                    shadowElevation = 16.dp,
+                    modifier = Modifier.fillMaxWidth().clip(bannerShape)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF34D399).copy(alpha = 0.18f),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Autofill Login",
+                                    tint = Color(0xFF34D399),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Autofill login for ${pwd.domain}?",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFF4F4F6)
+                            )
+                            Text(
+                                text = if (pwd.username.isNotBlank()) "User: ${pwd.username}" else "Saved password available",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFA1A1AA)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val cleanPass = pwd.password.replace("'", "\\'")
+                                val cleanUser = pwd.username.replace("'", "\\'")
+                                webView.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        var passInput = document.querySelector('input[type="password"]');
+                                        if (passInput) {
+                                            passInput.value = '$cleanPass';
+                                            passInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                            passInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                            var form = passInput.form || document;
+                                            var userInput = form.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="login"]');
+                                            if (userInput) {
+                                                userInput.value = '$cleanUser';
+                                                userInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                                userInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                            }
+                                        }
+                                    })();
+                                    """.trimIndent(),
+                                    null
+                                )
+                                showAutofillPrompt = false
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF059669),
+                                contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("autofill_confirm_button")
+                        ) {
+                            Text(
+                                text = "Autofill",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = { showAutofillPrompt = false },
+                            modifier = Modifier.size(28.dp).testTag("autofill_dismiss_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss",
+                                tint = Color(0xFFA1A1AA),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Link Long-Press Context Menu Overlay (Side Panel blur & transparency styling, no header/URL, no cancel button)
+        longPressedLinkUrl?.let { linkUrl ->
+            Dialog(
+                onDismissRequest = { longPressedLinkUrl = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                val sidebarCfg = uiState.sidebarConfig
+                val isLiquidGlass = sidebarCfg.liquidGlassEnabled
+                val panelAlpha = if (isLiquidGlass) {
+                    (sidebarCfg.sidebarOpacity * 0.85f).coerceIn(0.20f, 0.95f)
+                } else {
+                    sidebarCfg.sidebarOpacity.coerceIn(0.40f, 1f)
+                }
+                val panelShape = RoundedCornerShape(18.dp)
+                val panelBorderBrush = if (isLiquidGlass) {
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.40f),
+                            Color(0xFF1E1E24).copy(alpha = panelAlpha),
+                            Color.White.copy(alpha = 0.16f)
+                        )
+                    )
+                } else {
+                    Brush.verticalGradient(
+                        colors = listOf(Color(0xFF3F3F46), Color(0xFF27272A))
+                    )
+                }
+
+                Surface(
+                    shape = panelShape,
+                    color = Color(0xFF0F0F14).copy(alpha = panelAlpha),
+                    border = BorderStroke(width = 1.2.dp, brush = panelBorderBrush),
+                    shadowElevation = 24.dp,
+                    modifier = Modifier
+                        .widthIn(max = 330.dp)
+                        .fillMaxWidth(0.85f)
+                        .clip(panelShape)
+                        .testTag("zen_link_options_card")
+                ) {
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Surface(
                             onClick = {
-                                onOpenInNewTab(linkUrl)
+                                onOpenGlance(linkUrl)
                                 longPressedLinkUrl = null
                             },
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFF1E1E24),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isLiquidGlass) Color.White.copy(alpha = 0.08f) else Color(0xFF1E1E24).copy(alpha = 0.9f),
+                            border = BorderStroke(1.dp, if (isLiquidGlass) Color.White.copy(alpha = 0.18f) else Color(0xFF2A2A32)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("link_action_at_a_glance")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Visibility,
+                                    contentDescription = null,
+                                    tint = Color(0xFF8AB4F8),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = "Open in At a Glance",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFF8AB4F8),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                onOpenInNewTab(linkUrl, null)
+                                longPressedLinkUrl = null
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isLiquidGlass) Color.White.copy(alpha = 0.06f) else Color(0xFF1E1E24).copy(alpha = 0.9f),
+                            border = BorderStroke(1.dp, if (isLiquidGlass) Color.White.copy(alpha = 0.12f) else Color(0xFF2A2A32)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("link_action_open_new_tab")
@@ -981,8 +2137,9 @@ fun ZenWebPaneView(
                                 onOpenInPrivateTab(linkUrl)
                                 longPressedLinkUrl = null
                             },
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFF1E1E24),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isLiquidGlass) Color.White.copy(alpha = 0.06f) else Color(0xFF1E1E24).copy(alpha = 0.9f),
+                            border = BorderStroke(1.dp, if (isLiquidGlass) Color.White.copy(alpha = 0.12f) else Color(0xFF2A2A32)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("link_action_open_private_tab")
@@ -1012,8 +2169,9 @@ fun ZenWebPaneView(
                                 clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(linkUrl))
                                 longPressedLinkUrl = null
                             },
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFF1E1E24),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isLiquidGlass) Color.White.copy(alpha = 0.06f) else Color(0xFF1E1E24).copy(alpha = 0.9f),
+                            border = BorderStroke(1.dp, if (isLiquidGlass) Color.White.copy(alpha = 0.12f) else Color(0xFF2A2A32)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("link_action_copy_link")
@@ -1044,8 +2202,9 @@ fun ZenWebPaneView(
                                 onNavigateUrl(linkUrl)
                                 longPressedLinkUrl = null
                             },
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFF1E1E24),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isLiquidGlass) Color.White.copy(alpha = 0.06f) else Color(0xFF1E1E24).copy(alpha = 0.9f),
+                            border = BorderStroke(1.dp, if (isLiquidGlass) Color.White.copy(alpha = 0.12f) else Color(0xFF2A2A32)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("link_action_open_here")
@@ -1071,18 +2230,34 @@ fun ZenWebPaneView(
                             }
                         }
                     }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(
-                        onClick = { longPressedLinkUrl = null },
-                        modifier = Modifier.testTag("link_action_cancel_button")
-                    ) {
-                        Text("Cancel", color = Color(0xFFA1A1AA))
-                    }
                 }
-            )
+            }
         }
+    }
+}
+
+private fun getLanguageDisplayName(code: String?): String {
+    return when (code?.lowercase()?.take(2)) {
+        "es" -> "Spanish"
+        "fr" -> "French"
+        "de" -> "German"
+        "it" -> "Italian"
+        "pt" -> "Portuguese"
+        "ja" -> "Japanese"
+        "zh" -> "Chinese"
+        "ko" -> "Korean"
+        "ru" -> "Russian"
+        "ar" -> "Arabic"
+        "hi" -> "Hindi"
+        "nl" -> "Dutch"
+        "tr" -> "Turkish"
+        "pl" -> "Polish"
+        "sv" -> "Swedish"
+        "uk" -> "Ukrainian"
+        "vi" -> "Vietnamese"
+        "th" -> "Thai"
+        "id" -> "Indonesian"
+        else -> code?.uppercase() ?: "another language"
     }
 }
 
@@ -1098,6 +2273,7 @@ fun ZenHomeStartPage(
     onDeleteHomeShortcut: (String) -> Unit,
     onUpdateCustomTextPosition: (Float, Float) -> Unit,
     onOpenStartPageCustomizer: () -> Unit,
+    onOpenSidebar: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchInput by remember { mutableStateOf("") }
@@ -1120,6 +2296,30 @@ fun ZenHomeStartPage(
         modifier = modifier
             .fillMaxSize()
             .background(gradientBrush)
+            .pointerInput(cfg.horizontalSwipeMode) {
+                var totalDrag = 0f
+                var triggered = false
+                detectHorizontalDragGestures(
+                    onDragStart = { totalDrag = 0f; triggered = false },
+                    onDragEnd = { totalDrag = 0f; triggered = false },
+                    onDragCancel = { totalDrag = 0f; triggered = false },
+                    onHorizontalDrag = { change, dragAmount ->
+                        totalDrag += dragAmount
+                        if (!triggered) {
+                            val openThresholdCrossed = if (cfg.horizontalSwipeMode == com.example.data.HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
+                                totalDrag < -45f // Swipe left opens side panel
+                            } else {
+                                totalDrag > 45f  // Swipe right opens side panel
+                            }
+                            if (openThresholdCrossed) {
+                                triggered = true
+                                change.consume()
+                                onOpenSidebar()
+                            }
+                        }
+                    }
+                )
+            }
             .pointerInput(Unit) {
                 detectTapGestures(
                     onDoubleTap = { onFocusPane() },
@@ -1510,3 +2710,132 @@ fun ZenHomeStartPage(
         )
     }
 }
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun ZenOfflinePageRenderer(
+    page: OfflinePageEntity,
+    onLoadLiveSite: () -> Unit,
+    onNavigateUrl: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxSize().background(Color(0xFF101014))) {
+        // Offline Header Banner
+        Surface(
+            color = Color(0xFF1A1A22),
+            border = BorderStroke(1.dp, Color(0xFF2E2E38)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("offline_banner_header")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CloudOff,
+                        contentDescription = "Offline Mode",
+                        tint = Color(0xFF818CF8),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "OFFLINE SAVED PAGE",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF818CF8),
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            val sizeKb = (page.sizeBytes / 1024).coerceAtLeast(1)
+                            Text(
+                                text = "• $sizeKb KB",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF71717A)
+                            )
+                        }
+                        Text(
+                            text = page.title.ifBlank { page.url },
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFF4F4F6),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onLoadLiveSite,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF818CF8),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .height(32.dp)
+                        .testTag("load_live_site_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Load Live Site",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+
+        // WebView displaying stored HTML content
+        AndroidView(
+            factory = { context ->
+                WebView(context).apply {
+                    settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        allowFileAccess = true
+                        allowContentAccess = true
+                        loadWithOverviewMode = true
+                        useWideViewPort = true
+                        builtInZoomControls = true
+                        displayZoomControls = false
+                    }
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                            val url = request?.url?.toString() ?: return false
+                            if (url.startsWith("http://") || url.startsWith("https://")) {
+                                onNavigateUrl(url)
+                                return true
+                            }
+                            return false
+                        }
+                    }
+                    loadDataWithBaseURL(page.url, page.htmlContent, "text/html", "utf-8", null)
+                }
+            },
+            update = { view ->
+                view.loadDataWithBaseURL(page.url, page.htmlContent, "text/html", "utf-8", null)
+            },
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f)
+        )
+    }
+}
+
+
+

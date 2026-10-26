@@ -3,15 +3,22 @@ package com.example.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.data.AdBlockerLevel
 import com.example.data.BlockedTrackerEvent
 import com.example.data.BackSwipeSidebarMode
 import com.example.data.CustomSearchEngineEntity
 import com.example.data.DownloadItemEntity
 import com.example.data.FirefoxExtensionEntity
+import com.example.data.HistoryDeletionInterval
 import com.example.data.HistoryEntryEntity
+import com.example.data.HistoryNavEntry
+import com.example.data.OfflinePageEntity
+import com.example.data.PasswordEntity
 import com.example.data.HomeScreenStyle
 import com.example.data.HomeShortcutEntity
+import com.example.data.HorizontalSwipeNavigationMode
 import com.example.data.MediaPlaybackState
+import com.example.data.NewTabPosition
 import com.example.data.NewTabSwipeGestureAction
 import com.example.data.PrivacyConfig
 import com.example.data.SidebarColorMode
@@ -25,6 +32,7 @@ import com.example.data.StartPageGradientPreset
 import com.example.data.StartupBehavior
 import com.example.data.TabEntity
 import com.example.data.TabSwipeAction
+import com.example.data.TopToolbarToolItem
 import com.example.data.UrlBarPosition
 import com.example.data.WorkspaceEntity
 import com.example.data.ZenModEntity
@@ -32,6 +40,8 @@ import com.example.data.ZenRepository
 import com.example.privacy.ZenPrivacyEngine
 import com.example.ui.theme.ZenAccentTheme
 import java.util.UUID
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -53,7 +63,8 @@ enum class ActiveModalSheet {
     ESSENTIALS_MANAGER,
     START_PAGE_CUSTOMIZER,
     SEARCH_ENGINE_SETTINGS,
-    LIBRARY
+    LIBRARY,
+    PASSWORD_MANAGER
 }
 
 enum class FocusedPane {
@@ -76,6 +87,7 @@ data class ZenBrowserUiState(
     val isCompactFullscreen: Boolean = false,
     val isReaderModeEnabled: Boolean = false,
     val isPrivateGlanceMode: Boolean = false,
+    val activeGlanceUrl: String? = null,
     val isCenterTopSearchPopupVisible: Boolean = false,
     val requestSidebarSearchFocus: Boolean = false,
     val showTutorialDialog: Boolean = false,
@@ -83,6 +95,8 @@ data class ZenBrowserUiState(
     val homeShortcuts: List<HomeShortcutEntity> = emptyList(),
     val historyEntries: List<HistoryEntryEntity> = emptyList(),
     val downloadItems: List<DownloadItemEntity> = emptyList(),
+    val offlinePages: List<OfflinePageEntity> = emptyList(),
+    val savedPasswords: List<PasswordEntity> = emptyList(),
     val sidebarConfig: SidebarConfig = SidebarConfig(),
     val privacyConfig: PrivacyConfig = PrivacyConfig(),
     val customSearchEngines: List<CustomSearchEngineEntity> = emptyList(),
@@ -95,8 +109,14 @@ data class ZenBrowserUiState(
     val canGoForward: Boolean = false,
     val findInPageQuery: String = "",
     val isFindInPageVisible: Boolean = false,
-    val statusBannerMessage: String? = null
+    val isInPictureInPictureMode: Boolean = false,
+    val statusBannerMessage: String? = null,
+    val desktopModeTabIds: Set<String> = emptySet(),
+    val searchSuggestions: List<com.example.data.SearchSuggestionItem> = emptyList()
 ) {
+    val isFocusedTabDesktopMode: Boolean
+        get() = desktopModeTabIds.contains(focusedTab?.id)
+
     val activeWorkspace: WorkspaceEntity?
         get() = workspaces.find { it.id == activeWorkspaceId } ?: workspaces.firstOrNull()
 
@@ -245,6 +265,7 @@ private data class TransientSessionState(
     val isCompactFullscreen: Boolean = false,
     val isReaderModeEnabled: Boolean = false,
     val isPrivateGlanceMode: Boolean = false,
+    val activeGlanceUrl: String? = null,
     val isCenterTopSearchPopupVisible: Boolean = false,
     val requestSidebarSearchFocus: Boolean = false,
     val showTutorialDialog: Boolean = false,
@@ -256,7 +277,10 @@ private data class TransientSessionState(
     val canGoForward: Boolean = false,
     val findInPageQuery: String = "",
     val isFindInPageVisible: Boolean = false,
-    val statusBannerMessage: String? = null
+    val isInPictureInPictureMode: Boolean = false,
+    val statusBannerMessage: String? = null,
+    val desktopModeTabIds: Set<String> = emptySet(),
+    val searchSuggestions: List<com.example.data.SearchSuggestionItem> = emptyList()
 )
 
 class ZenBrowserViewModel(
@@ -271,6 +295,7 @@ class ZenBrowserViewModel(
         viewModelScope.launch {
             repository.seedDefaultsIfEmpty()
             applyStartupLifecycleRules()
+            applyHistoryDeletionPolicy()
         }
         repository.sidebarConfigFlow?.let { flow ->
             viewModelScope.launch {
@@ -291,8 +316,15 @@ class ZenBrowserViewModel(
     val uiState: StateFlow<ZenBrowserUiState> = combine(
         repository.workspaces,
         repository.tabs,
-        combine(repository.mods, repository.firefoxExtensions, repository.history, repository.downloads) { mods, extensions, hist, dls ->
-            tuple4(mods, extensions, hist, dls)
+        combine(
+            combine(repository.mods, repository.firefoxExtensions, repository.history) { mods, extensions, hist ->
+                Triple(mods, extensions, hist)
+            },
+            combine(repository.downloads, repository.offlinePages, repository.passwords) { dls, offline, pass ->
+                Triple(dls, offline, pass)
+            }
+        ) { (mods, extensions, hist), (dls, offline, pass) ->
+            Sextuple(mods, extensions, hist, dls, offline, pass)
         },
         localSidebarConfig,
         combine(
@@ -303,7 +335,7 @@ class ZenBrowserViewModel(
         ) { priv, customEngines, shortcuts, sess ->
             tuple4(priv, customEngines, shortcuts, sess)
         }
-    ) { workspaces, tabs, (mods, extensions, hist, dls), sidebarCfg, (privacyCfg, customEngines, shortcuts, session) ->
+    ) { workspaces, tabs, (mods, extensions, hist, dls, offline, pass), sidebarCfg, (privacyCfg, customEngines, shortcuts, session) ->
         val resolvedWorkspaceId = if (workspaces.any { it.id == session.activeWorkspaceId }) {
             session.activeWorkspaceId
         } else {
@@ -335,6 +367,7 @@ class ZenBrowserViewModel(
             isCompactFullscreen = session.isCompactFullscreen,
             isReaderModeEnabled = session.isReaderModeEnabled,
             isPrivateGlanceMode = session.isPrivateGlanceMode,
+            activeGlanceUrl = session.activeGlanceUrl,
             isCenterTopSearchPopupVisible = session.isCenterTopSearchPopupVisible,
             requestSidebarSearchFocus = session.requestSidebarSearchFocus,
             showTutorialDialog = session.showTutorialDialog,
@@ -342,6 +375,8 @@ class ZenBrowserViewModel(
             homeShortcuts = shortcuts,
             historyEntries = hist,
             downloadItems = dls,
+            offlinePages = offline,
+            savedPasswords = pass,
             sidebarConfig = sidebarCfg,
             privacyConfig = privacyCfg,
             customSearchEngines = customEngines,
@@ -354,7 +389,10 @@ class ZenBrowserViewModel(
             canGoForward = session.canGoForward,
             findInPageQuery = session.findInPageQuery,
             isFindInPageVisible = session.isFindInPageVisible,
-            statusBannerMessage = session.statusBannerMessage
+            isInPictureInPictureMode = session.isInPictureInPictureMode,
+            statusBannerMessage = session.statusBannerMessage,
+            desktopModeTabIds = session.desktopModeTabIds,
+            searchSuggestions = session.searchSuggestions
         )
     }.stateIn(
         scope = viewModelScope,
@@ -364,6 +402,9 @@ class ZenBrowserViewModel(
 
     private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
     private fun <A, B, C, D> tuple4(a: A, b: B, c: C, d: D) = Quad(a, b, c, d)
+    private data class Quint<A, B, C, D, E>(val first: A, val second: B, val third: C, val fourth: D, val fifth: E)
+    private fun <A, B, C, D, E> tuple5(a: A, b: B, c: C, d: D, e: E) = Quint(a, b, c, d, e)
+    private data class Sextuple<A, B, C, D, E, F>(val first: A, val second: B, val third: C, val fourth: D, val fifth: E, val sixth: F)
 
     private suspend fun applyStartupLifecycleRules() {
         val cfg = repository.sidebarConfigFlow?.first() ?: localSidebarConfig.value
@@ -414,11 +455,33 @@ class ZenBrowserViewModel(
                     )
                 }
             }
+        } else {
+            val (savedWsId, savedTabId) = repository.getLastSessionState()
+            val allTabs = repository.tabs.first()
+            val targetTab = if (!savedTabId.isNullOrBlank()) allTabs.firstOrNull { it.id == savedTabId && !it.isPrivate } else null
+            if (targetTab != null) {
+                if (targetTab.isUnloaded) {
+                    repository.updateTab(
+                        targetTab.copy(
+                            isUnloaded = false,
+                            lastAccessed = System.currentTimeMillis()
+                        )
+                    )
+                }
+                sessionState.update {
+                    it.copy(
+                        activeWorkspaceId = savedWsId ?: targetTab.workspaceId,
+                        activeTabId = targetTab.id
+                    )
+                }
+            }
         }
     }
 
     fun onAppBackgroundedOrClosed() {
         val cfg = localSidebarConfig.value
+        val curWs = sessionState.value.activeWorkspaceId
+        val curTab = sessionState.value.activeTabId
         viewModelScope.launch {
             if (cfg.closePrivateOnAppClose) {
                 repository.deletePrivateTabsAndWorkspaces()
@@ -427,6 +490,9 @@ class ZenBrowserViewModel(
             val updated = cfg.copy(lastSessionTimestamp = System.currentTimeMillis())
             localSidebarConfig.value = updated
             repository.saveSidebarConfig(updated)
+            if (curWs.isNotBlank() && curTab.isNotBlank()) {
+                repository.saveLastSessionState(curWs, curTab)
+            }
         }
     }
 
@@ -445,10 +511,12 @@ class ZenBrowserViewModel(
     }
 
     fun toggleSidebar() {
+        if (sessionState.value.isInPictureInPictureMode) return
         sessionState.update { it.copy(isSidebarOpen = !it.isSidebarOpen) }
     }
 
     fun setSidebarOpen(open: Boolean) {
+        if (open && sessionState.value.isInPictureInPictureMode) return
         sessionState.update {
             it.copy(
                 isSidebarOpen = open,
@@ -465,11 +533,22 @@ class ZenBrowserViewModel(
         sessionState.update { it.copy(isCenterTopSearchPopupVisible = visible) }
     }
 
+    fun calculateNewTabSortOrder(): Int {
+        val state = uiState.value
+        val openTabs = state.currentWorkspaceOpenTabs
+        return if (state.sidebarConfig.newTabPosition == NewTabPosition.TOP) {
+            (openTabs.minOfOrNull { it.sortOrder } ?: 0) - 1
+        } else {
+            (openTabs.maxOfOrNull { it.sortOrder } ?: 0) + 1
+        }
+    }
+
     fun onNewTabButtonClicked() {
         val cfg = localSidebarConfig.value
         if (cfg.urlBarPosition == UrlBarPosition.SIDEBAR_ONLY) {
             val state = uiState.value
             val effectivePrivate = state.activeWorkspace?.isPrivate == true
+            val targetSortOrder = calculateNewTabSortOrder()
             val newTab = TabEntity(
                 id = "tab_${UUID.randomUUID().toString().take(8)}",
                 workspaceId = state.activeWorkspaceId,
@@ -478,6 +557,7 @@ class ZenBrowserViewModel(
                 isPinned = false,
                 isEssential = false,
                 isPrivate = effectivePrivate,
+                sortOrder = targetSortOrder,
                 lastAccessed = System.currentTimeMillis()
             )
             viewModelScope.launch {
@@ -598,7 +678,9 @@ class ZenBrowserViewModel(
             return
         }
 
+        val targetWsId = if (!targetTab.isEssential) targetTab.workspaceId else state.activeWorkspaceId
         viewModelScope.launch {
+            repository.saveLastSessionState(targetWsId, tabId)
             repository.updateTab(
                 targetTab.copy(
                     isUnloaded = false,
@@ -751,7 +833,8 @@ class ZenBrowserViewModel(
     fun createNewTab(
         initialInput: String = "zen://home",
         pinToWorkspace: Boolean = false,
-        isPrivate: Boolean = false
+        isPrivate: Boolean = false,
+        switchToTab: Boolean = true
     ) {
         val state = uiState.value
         val effectivePrivate = isPrivate || (state.activeWorkspace?.isPrivate == true)
@@ -759,13 +842,14 @@ class ZenBrowserViewModel(
             rawInput = initialInput,
             privacyConfig = state.privacyConfig,
             isPrivateContext = effectivePrivate,
-            customEngines = state.customSearchEngines
+            customEngines = state.customSearchEngines,
+            fakeSearchTrigger = state.sidebarConfig.fakeSearchQueryTrigger
         )
         val title = when {
             sanitized.finalUrl == "zen://home" -> if (effectivePrivate) "Private Tab" else "New Tab"
             else -> ZenPrivacyEngine.extractHostDisplay(sanitized.finalUrl)
         }
-        val maxSortOrder = (state.allTabs.maxOfOrNull { it.sortOrder } ?: 0) + 1
+        val targetSortOrder = calculateNewTabSortOrder()
         val newTab = TabEntity(
             id = "tab_${UUID.randomUUID().toString().take(8)}",
             workspaceId = state.activeWorkspaceId,
@@ -774,28 +858,57 @@ class ZenBrowserViewModel(
             isPinned = pinToWorkspace,
             isEssential = false,
             isPrivate = effectivePrivate,
-            sortOrder = maxSortOrder,
+            sortOrder = targetSortOrder,
             lastAccessed = System.currentTimeMillis()
         )
         viewModelScope.launch {
             repository.insertTab(newTab)
             recordSanitizationMetrics(sanitized.strippedParamsCount, sanitized.upgradedToHttps)
-            sessionState.update { sess ->
-                if (sess.isSplitViewEnabled && sess.focusedPane == FocusedPane.SECONDARY) {
+            if (switchToTab) {
+                sessionState.update { sess ->
+                    if (sess.isSplitViewEnabled && sess.focusedPane == FocusedPane.SECONDARY) {
+                        sess.copy(
+                            secondarySplitTabId = newTab.id,
+                            isSidebarOpen = false,
+                            statusBannerMessage = if (effectivePrivate) "New Private Tab" else null
+                        )
+                    } else {
+                        sess.copy(
+                            activeTabId = newTab.id,
+                            isSidebarOpen = false,
+                            statusBannerMessage = if (effectivePrivate) "New Private Tab" else null
+                        )
+                    }
+                }
+            } else {
+                sessionState.update { sess ->
                     sess.copy(
-                        secondarySplitTabId = newTab.id,
-                        isSidebarOpen = false,
-                        statusBannerMessage = if (effectivePrivate) "New Private Tab" else null
-                    )
-                } else {
-                    sess.copy(
-                        activeTabId = newTab.id,
-                        isSidebarOpen = false,
-                        statusBannerMessage = if (effectivePrivate) "New Private Tab" else null
+                        statusBannerMessage = "Tab opened in background • '$title'"
                     )
                 }
             }
         }
+    }
+
+    fun openLinkInNewTab(
+        url: String,
+        isPrivate: Boolean = false,
+        forceSwitch: Boolean? = null
+    ) {
+        val shouldSwitch = forceSwitch ?: uiState.value.sidebarConfig.switchToNewTabImmediately
+        createNewTab(
+            initialInput = url,
+            isPrivate = isPrivate,
+            switchToTab = shouldSwitch
+        )
+    }
+
+    fun updateSwitchToNewTabImmediately(enabled: Boolean) {
+        updateSidebarConfig { it.copy(switchToNewTabImmediately = enabled) }
+    }
+
+    fun updateNewTabPosition(position: NewTabPosition) {
+        updateSidebarConfig { it.copy(newTabPosition = position) }
     }
 
     fun duplicateTab(tab: TabEntity) {
@@ -870,6 +983,92 @@ class ZenBrowserViewModel(
         }
     }
 
+    fun saveCurrentPageForOffline(tabId: String, htmlContent: String) {
+        val state = uiState.value
+        val tab = state.allTabs.find { it.id == tabId } ?: state.focusedTab ?: return
+        if (tab.url.isBlank() || tab.url.startsWith("zen://")) {
+            showBanner("Cannot save system page for offline reading")
+            return
+        }
+        val cleanTitle = tab.title.ifBlank { ZenPrivacyEngine.extractHostDisplay(tab.url) }
+        val bytes = htmlContent.toByteArray(Charsets.UTF_8)
+        val pageId = "off_${UUID.randomUUID().toString().take(8)}"
+        val page = OfflinePageEntity(
+            id = pageId,
+            title = cleanTitle,
+            url = tab.url,
+            htmlContent = htmlContent,
+            timestamp = System.currentTimeMillis(),
+            sizeBytes = bytes.size.toLong()
+        )
+        viewModelScope.launch {
+            repository.insertOfflinePage(page)
+            showBanner("Saved '$cleanTitle' for offline reading")
+        }
+    }
+
+    fun saveTabForOffline(tab: TabEntity, htmlContent: String = "") {
+        if (tab.url.isBlank() || tab.url.startsWith("zen://")) {
+            showBanner("Cannot save system page for offline reading")
+            return
+        }
+        val cleanTitle = tab.title.ifBlank { ZenPrivacyEngine.extractHostDisplay(tab.url) }
+        val bytes = htmlContent.toByteArray(Charsets.UTF_8)
+        val pageId = "off_${UUID.randomUUID().toString().take(8)}"
+        val page = OfflinePageEntity(
+            id = pageId,
+            title = cleanTitle,
+            url = tab.url,
+            htmlContent = htmlContent,
+            timestamp = System.currentTimeMillis(),
+            sizeBytes = if (bytes.isNotEmpty()) bytes.size.toLong() else tab.url.length.toLong()
+        )
+        viewModelScope.launch {
+            repository.insertOfflinePage(page)
+            showBanner("Saved '$cleanTitle' for offline reading")
+        }
+    }
+
+    fun deleteOfflinePage(id: String) {
+        viewModelScope.launch {
+            repository.deleteOfflinePage(id)
+            showBanner("Removed offline page")
+        }
+    }
+
+    fun insertPassword(password: PasswordEntity) {
+        viewModelScope.launch {
+            repository.insertPassword(password)
+            showBanner("Saved login details for ${password.domain}")
+        }
+    }
+
+    fun deletePassword(id: String) {
+        viewModelScope.launch {
+            repository.deletePassword(id)
+            showBanner("Removed password")
+        }
+    }
+
+    fun clearAllPasswords() {
+        viewModelScope.launch {
+            repository.clearAllPasswords()
+            showBanner("Cleared all saved passwords")
+        }
+    }
+
+    fun clearAllOfflinePages() {
+        viewModelScope.launch {
+            repository.clearAllOfflinePages()
+            showBanner("Cleared offline pages")
+        }
+    }
+
+    fun openOfflinePage(page: OfflinePageEntity) {
+        val targetUrl = "zen://offline?id=${page.id}"
+        createNewTab(initialInput = targetUrl, switchToTab = true)
+    }
+
     fun handleNewTabSwipeGesture(isLeftSwipe: Boolean) {
         val cfg = localSidebarConfig.value
         val action = if (isLeftSwipe) cfg.newTabSwipeLeftAction else cfg.newTabSwipeRightAction
@@ -914,6 +1113,7 @@ class ZenBrowserViewModel(
             ?: state.allTabs.filter { it.id != tab.id && !it.isUnloaded }.maxByOrNull { it.lastAccessed }
 
         viewModelScope.launch {
+            com.example.ui.components.ZenWebViewManager.remove(tab.id)
             repository.updateTab(tab.copy(isUnloaded = true))
 
             val isPrimaryBeingUnloaded = state.activeTabId == tab.id
@@ -1128,6 +1328,102 @@ class ZenBrowserViewModel(
         }
     }
 
+    fun setPictureInPictureMode(inPip: Boolean) {
+        sessionState.update {
+            it.copy(
+                isInPictureInPictureMode = inPip,
+                isSidebarOpen = if (inPip) false else it.isSidebarOpen,
+                activeSheet = if (inPip) ActiveModalSheet.NONE else it.activeSheet,
+                isCenterTopSearchPopupVisible = if (inPip) false else it.isCenterTopSearchPopupVisible,
+                requestSidebarSearchFocus = if (inPip) false else it.requestSidebarSearchFocus
+            )
+        }
+    }
+
+    fun updateBackgroundPlayEnabled(enabled: Boolean) {
+        updateSidebarConfig { it.copy(backgroundPlayEnabled = enabled) }
+    }
+
+    private val tabHistoryStacks = mutableMapOf<String, ArrayDeque<String>>()
+    private val tabForwardStacks = mutableMapOf<String, ArrayDeque<String>>()
+
+    fun pushTabHistory(tabId: String, url: String) {
+        if (url.isBlank() || url == "about:blank") return
+        val stack = tabHistoryStacks.getOrPut(tabId) { ArrayDeque() }
+        if (stack.lastOrNull() != url) {
+            stack.addLast(url)
+            if (stack.size > 50) stack.removeFirst()
+        }
+    }
+
+    fun popTabHistory(tabId: String, currentUrl: String? = null): String? {
+        val stack = tabHistoryStacks[tabId] ?: return null
+        if (currentUrl != null) {
+            while (stack.isNotEmpty() && stack.last() == currentUrl) {
+                stack.removeLast()
+            }
+        }
+        if (stack.isEmpty()) return null
+        val targetUrl = stack.removeLast()
+        if (!currentUrl.isNullOrBlank() && currentUrl != "about:blank") {
+            val fwdStack = tabForwardStacks.getOrPut(tabId) { ArrayDeque() }
+            if (fwdStack.lastOrNull() != currentUrl) {
+                fwdStack.addLast(currentUrl)
+                if (fwdStack.size > 50) fwdStack.removeFirst()
+            }
+        }
+        return targetUrl
+    }
+
+    fun popTabForward(tabId: String, currentUrl: String? = null): String? {
+        val fwdStack = tabForwardStacks[tabId] ?: return null
+        if (currentUrl != null) {
+            while (fwdStack.isNotEmpty() && fwdStack.last() == currentUrl) {
+                fwdStack.removeLast()
+            }
+        }
+        if (fwdStack.isEmpty()) return null
+        val targetUrl = fwdStack.removeLast()
+        if (!currentUrl.isNullOrBlank() && currentUrl != "about:blank") {
+            pushTabHistory(tabId, currentUrl)
+        }
+        return targetUrl
+    }
+
+    fun canTabHistoryGoBack(tabId: String): Boolean {
+        return tabHistoryStacks[tabId]?.isNotEmpty() == true
+    }
+
+    fun canTabForwardGoForward(tabId: String): Boolean {
+        return tabForwardStacks[tabId]?.isNotEmpty() == true
+    }
+
+    fun getTabHistoryEntries(tabId: String): List<HistoryNavEntry> {
+        val stack = tabHistoryStacks[tabId] ?: return emptyList()
+        return stack.toList().reversed().mapIndexed { index, url ->
+            HistoryNavEntry(
+                title = ZenPrivacyEngine.extractHostDisplay(url),
+                url = url,
+                stepsBack = index + 1
+            )
+        }
+    }
+
+    fun popTabHistoryOffset(tabId: String, offset: Int, currentUrl: String? = null): String? {
+        if (offset >= 0) return null
+        val steps = kotlin.math.abs(offset)
+        var targetUrl: String? = null
+        for (i in 0 until steps) {
+            val popped = popTabHistory(tabId, if (i == 0) currentUrl else targetUrl) ?: break
+            targetUrl = popped
+        }
+        return targetUrl
+    }
+
+    fun updatePlayInWindowPipEnabled(enabled: Boolean) {
+        updateSidebarConfig { it.copy(playInWindowPipEnabled = enabled) }
+    }
+
     fun navigateFocusedTab(rawInput: String) {
         val state = uiState.value
         val targetTab = state.focusedTab
@@ -1136,7 +1432,8 @@ class ZenBrowserViewModel(
             rawInput = rawInput,
             privacyConfig = state.privacyConfig,
             isPrivateContext = isPrivate,
-            customEngines = state.customSearchEngines
+            customEngines = state.customSearchEngines,
+            fakeSearchTrigger = state.sidebarConfig.fakeSearchQueryTrigger
         )
 
         recordSanitizationMetrics(sanitized.strippedParamsCount, sanitized.upgradedToHttps)
@@ -1152,6 +1449,12 @@ class ZenBrowserViewModel(
         if (targetTab == null) {
             createNewTab(sanitized.finalUrl, isPrivate = isPrivate)
             return
+        }
+
+        val previousUrl = targetTab.url
+        if (previousUrl.isNotBlank() && previousUrl != "about:blank" && previousUrl != sanitized.finalUrl) {
+            pushTabHistory(targetTab.id, previousUrl)
+            tabForwardStacks[targetTab.id]?.clear()
         }
 
         val updatedTitle = if (sanitized.finalUrl == "zen://home") {
@@ -1182,6 +1485,11 @@ class ZenBrowserViewModel(
         val isPrivateContext = tab.isPrivate || (tabWorkspace?.isPrivate == true)
 
         if (tab.url != url || tab.title != cleanTitle || tab.isUnloaded) {
+            val previousUrl = tab.url
+            if (previousUrl.isNotBlank() && previousUrl != "about:blank" && previousUrl != url) {
+                pushTabHistory(tabId, previousUrl)
+            }
+
             viewModelScope.launch {
                 repository.updateTab(
                     tab.copy(
@@ -1232,28 +1540,74 @@ class ZenBrowserViewModel(
     fun closeTab(tabId: String) {
         val state = uiState.value
         val remainingTabs = state.allTabs.filter { it.id != tabId }
+        val remainingOpenTabsInWs = remainingTabs.filter { !it.isUnloaded && (it.workspaceId == state.activeWorkspaceId || it.isEssential) }
+        val remainingOpenTabsAnywhere = remainingTabs.filter { !it.isUnloaded }
+        val fallbackOpenTab = remainingOpenTabsInWs.filter { !it.isEssential }.maxByOrNull { it.lastAccessed }
+            ?: remainingOpenTabsInWs.maxByOrNull { it.lastAccessed }
+            ?: remainingOpenTabsAnywhere.maxByOrNull { it.lastAccessed }
+            ?: remainingTabs.firstOrNull { it.workspaceId == state.activeWorkspaceId }
+            ?: remainingTabs.firstOrNull()
+
+        tabHistoryStacks.remove(tabId)
+        tabForwardStacks.remove(tabId)
+        com.example.ui.components.ZenWebViewManager.remove(tabId)
+        sessionState.update { it.copy(desktopModeTabIds = it.desktopModeTabIds - tabId) }
         viewModelScope.launch {
             repository.deleteTab(tabId)
-            if (remainingTabs.isEmpty()) {
-                createNewTab("zen://home")
-            } else {
-                sessionState.update { sess ->
-                    val nextPrimary = if (sess.activeTabId == tabId) {
-                        remainingTabs.firstOrNull { it.workspaceId == sess.activeWorkspaceId && !it.isEssential }?.id
-                            ?: remainingTabs.first().id
-                    } else sess.activeTabId
+            val isPrimaryClosed = (state.activeTabId == tabId) || (state.activePrimaryTab?.id == tabId)
+            val isSecondaryClosed = state.isSplitViewEnabled && state.secondarySplitTabId == tabId
 
-                    val nextSecondary = if (sess.secondarySplitTabId == tabId) null else sess.secondarySplitTabId
+            if (fallbackOpenTab != null) {
+                if (fallbackOpenTab.isUnloaded) {
+                    repository.updateTab(
+                        fallbackOpenTab.copy(
+                            isUnloaded = false,
+                            lastAccessed = System.currentTimeMillis()
+                        )
+                    )
+                }
+                // There is another open tab available -> switch to that tab
+                sessionState.update { sess ->
+                    val nextPrimary = if (isPrimaryClosed) fallbackOpenTab.id else sess.activeTabId
+                    val nextSecondary = if (isSecondaryClosed) null else sess.secondarySplitTabId
                     val updatedMedia = if (sess.mediaPlaybackState.tabId == tabId) {
                         MediaPlaybackState(isActive = false)
                     } else sess.mediaPlaybackState
+                    val nextWs = if (!fallbackOpenTab.isEssential) fallbackOpenTab.workspaceId else sess.activeWorkspaceId
 
+                    val showCloseNotification = state.sidebarConfig.showTabCloseNotification && state.sidebarConfig.showActionNotifications
                     sess.copy(
+                        activeWorkspaceId = nextWs,
                         activeTabId = nextPrimary,
                         secondarySplitTabId = nextSecondary,
                         isSplitViewEnabled = sess.isSplitViewEnabled && nextSecondary != null,
-                        mediaPlaybackState = updatedMedia
+                        mediaPlaybackState = updatedMedia,
+                        statusBannerMessage = if (showCloseNotification) "Tab closed • Switched to '${fallbackOpenTab.title}'" else null
                     )
+                }
+            } else {
+                // No other open tabs -> switch to Home Screen!
+                val existingHomeTab = remainingTabs.firstOrNull {
+                    it.url == "zen://home" && (it.workspaceId == state.activeWorkspaceId || !it.isEssential)
+                }
+                if (existingHomeTab != null) {
+                    repository.updateTab(
+                        existingHomeTab.copy(
+                            isUnloaded = false,
+                            lastAccessed = System.currentTimeMillis()
+                        )
+                    )
+                    sessionState.update { sess ->
+                        val showCloseNotification = state.sidebarConfig.showTabCloseNotification && state.sidebarConfig.showActionNotifications
+                        sess.copy(
+                            activeTabId = existingHomeTab.id,
+                            secondarySplitTabId = null,
+                            isSplitViewEnabled = false,
+                            statusBannerMessage = if (showCloseNotification) "Tab closed • Returned to Home Screen" else null
+                        )
+                    }
+                } else {
+                    createNewTab("zen://home")
                 }
             }
         }
@@ -1326,6 +1680,22 @@ class ZenBrowserViewModel(
         sessionState.update { it.copy(isReaderModeEnabled = !it.isReaderModeEnabled) }
     }
 
+    fun toggleDesktopMode(tabId: String? = null) {
+        val targetTabId = tabId ?: uiState.value.focusedTab?.id ?: return
+        sessionState.update { current ->
+            val isCurrentlyDesktop = current.desktopModeTabIds.contains(targetTabId)
+            val newSet = if (isCurrentlyDesktop) {
+                current.desktopModeTabIds - targetTabId
+            } else {
+                current.desktopModeTabIds + targetTabId
+            }
+            current.copy(
+                desktopModeTabIds = newSet,
+                statusBannerMessage = if (!isCurrentlyDesktop) "Switched to Desktop Site" else "Switched to Mobile Site"
+            )
+        }
+    }
+
     fun toggleCompactFullscreen() {
         sessionState.update {
             val next = !it.isCompactFullscreen
@@ -1372,8 +1742,48 @@ class ZenBrowserViewModel(
         updateSidebarConfig { it.copy(backSwipeSidebarMode = mode) }
     }
 
+    fun updateHorizontalSwipeMode(mode: HorizontalSwipeNavigationMode) {
+        updateSidebarConfig { it.copy(horizontalSwipeMode = mode) }
+    }
+
     fun updateShowSidebarNavControls(show: Boolean) {
         updateSidebarConfig { it.copy(showSidebarNavControls = show) }
+    }
+
+    fun updateOpenInNewTab(openInNewTab: Boolean) {
+        updateSidebarConfig { it.copy(openInNewTab = openInNewTab) }
+    }
+
+    fun updateOpenHistoryInNewTab(openHistoryInNewTab: Boolean) {
+        updateSidebarConfig { it.copy(openHistoryInNewTab = openHistoryInNewTab) }
+    }
+
+    fun updateNotificationSettings(
+        showTabCloseNotification: Boolean? = null,
+        showActionNotifications: Boolean? = null
+    ) {
+        updateSidebarConfig { cfg ->
+            cfg.copy(
+                showTabCloseNotification = showTabCloseNotification ?: cfg.showTabCloseNotification,
+                showActionNotifications = showActionNotifications ?: cfg.showActionNotifications
+            )
+        }
+    }
+
+    fun updateFakeSearchConfig(
+        customAiOverviewText: String? = null,
+        fakeSearchQueryTrigger: String? = null,
+        fakeSearchHeadline: String? = null,
+        fakeSearchSnippet: String? = null
+    ) {
+        updateSidebarConfig { cfg ->
+            cfg.copy(
+                customAiOverviewText = customAiOverviewText ?: cfg.customAiOverviewText,
+                fakeSearchQueryTrigger = fakeSearchQueryTrigger ?: cfg.fakeSearchQueryTrigger,
+                fakeSearchHeadline = fakeSearchHeadline ?: cfg.fakeSearchHeadline,
+                fakeSearchSnippet = fakeSearchSnippet ?: cfg.fakeSearchSnippet
+            )
+        }
     }
 
     fun toggleSidebarToolItem(item: SidebarToolItem) {
@@ -1399,6 +1809,32 @@ class ZenBrowserViewModel(
                 current.add(targetIdx, removed)
             }
             cfg.copy(enabledSidebarTools = current)
+        }
+    }
+
+    fun toggleTopToolbarToolItem(item: TopToolbarToolItem) {
+        updateSidebarConfig { cfg ->
+            val current = cfg.enabledTopToolbarTools.toMutableList()
+            if (current.contains(item)) {
+                current.remove(item)
+            } else {
+                current.add(item)
+            }
+            cfg.copy(enabledTopToolbarTools = current)
+        }
+    }
+
+    fun moveTopToolbarToolItem(item: TopToolbarToolItem, direction: Int) {
+        updateSidebarConfig { cfg ->
+            val current = cfg.enabledTopToolbarTools.toMutableList()
+            val idx = current.indexOf(item)
+            if (idx == -1) return@updateSidebarConfig cfg
+            val targetIdx = (idx + direction).coerceIn(0, current.lastIndex)
+            if (idx != targetIdx) {
+                val removed = current.removeAt(idx)
+                current.add(targetIdx, removed)
+            }
+            cfg.copy(enabledTopToolbarTools = current)
         }
     }
 
@@ -1459,14 +1895,16 @@ class ZenBrowserViewModel(
         widthDp: Float? = null,
         lengthDp: Float? = null,
         verticalOffsetFraction: Float? = null,
-        hideInCompactMode: Boolean? = null
+        hideInCompactMode: Boolean? = null,
+        hideAlways: Boolean? = null
     ) {
         updateSidebarConfig { cfg ->
             cfg.copy(
                 edgeBarWidthDp = widthDp ?: cfg.edgeBarWidthDp,
                 edgeBarLengthDp = lengthDp ?: cfg.edgeBarLengthDp,
                 edgeBarVerticalOffsetFraction = verticalOffsetFraction ?: cfg.edgeBarVerticalOffsetFraction,
-                hideEdgeBarInCompactMode = hideInCompactMode ?: cfg.hideEdgeBarInCompactMode
+                hideEdgeBarInCompactMode = hideInCompactMode ?: cfg.hideEdgeBarInCompactMode,
+                hideEdgeBarAlways = hideAlways ?: cfg.hideEdgeBarAlways
             )
         }
     }
@@ -1533,36 +1971,112 @@ class ZenBrowserViewModel(
         }
     }
 
+    private var saveSidebarConfigJob: Job? = null
     private fun updateSidebarConfig(transform: (SidebarConfig) -> SidebarConfig) {
         val updated = transform(localSidebarConfig.value)
         localSidebarConfig.value = updated
-        viewModelScope.launch {
+        saveSidebarConfigJob?.cancel()
+        saveSidebarConfigJob = viewModelScope.launch {
+            delay(120)
             repository.saveSidebarConfig(updated)
         }
     }
 
     fun updatePrivacyToggle(
         blockTrackers: Boolean? = null,
+        adBlockerLevel: AdBlockerLevel? = null,
         httpsEverywhere: Boolean? = null,
         stripParams: Boolean? = null,
         fingerprintProtection: Boolean? = null,
         blockThirdPartyCookies: Boolean? = null,
         normalSearchEngineId: String? = null,
-        privateSearchEngineId: String? = null
+        privateSearchEngineId: String? = null,
+        deletionInterval: HistoryDeletionInterval? = null
     ) {
         val current = localPrivacyConfig.value
         val updated = current.copy(
             blockTrackersAndAds = blockTrackers ?: current.blockTrackersAndAds,
+            adBlockerLevel = adBlockerLevel ?: current.adBlockerLevel,
             httpsEverywhere = httpsEverywhere ?: current.httpsEverywhere,
             stripTrackingParams = stripParams ?: current.stripTrackingParams,
             fingerprintProtection = fingerprintProtection ?: current.fingerprintProtection,
             blockThirdPartyCookies = blockThirdPartyCookies ?: current.blockThirdPartyCookies,
             normalSearchEngineId = normalSearchEngineId ?: current.normalSearchEngineId,
-            privateSearchEngineId = privateSearchEngineId ?: current.privateSearchEngineId
+            privateSearchEngineId = privateSearchEngineId ?: current.privateSearchEngineId,
+            historyDeletionInterval = deletionInterval ?: current.historyDeletionInterval
         )
         localPrivacyConfig.value = updated
         viewModelScope.launch {
             repository.savePrivacyConfig(updated)
+        }
+    }
+
+    fun openGlance(url: String? = null) {
+        val targetUrl = if (!url.isNullOrBlank()) {
+            url
+        } else {
+            val focusedUrl = uiState.value.focusedTab?.url
+            if (!focusedUrl.isNullOrBlank() && focusedUrl != "zen://home") {
+                focusedUrl
+            } else {
+                "https://duckduckgo.com"
+            }
+        }
+        sessionState.update { it.copy(activeGlanceUrl = targetUrl, isSidebarOpen = false) }
+    }
+
+    fun closeGlance() {
+        sessionState.update { it.copy(activeGlanceUrl = null) }
+    }
+
+    fun toggleOpenLinksInGlanceAutomatically(enabled: Boolean) {
+        updateSidebarConfig { it.copy(openLinksInGlanceAutomatically = enabled) }
+    }
+
+    fun openSplitViewWithUrl(url: String) {
+        val state = uiState.value
+        val effectivePrivate = state.isCurrentContextPrivate
+        val maxSort = (state.allTabs.maxOfOrNull { it.sortOrder } ?: 0) + 1
+        val newTab = TabEntity(
+            id = "tab_${UUID.randomUUID().toString().take(8)}",
+            workspaceId = state.activeWorkspaceId,
+            title = ZenPrivacyEngine.extractHostDisplay(url),
+            url = url,
+            isPinned = false,
+            isEssential = false,
+            isPrivate = effectivePrivate,
+            sortOrder = maxSort,
+            lastAccessed = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.insertTab(newTab)
+            openSplitViewWithTabs(state.activeTabId, newTab.id)
+        }
+    }
+
+    fun updateHistoryDeletionInterval(interval: HistoryDeletionInterval) {
+        updatePrivacyToggle(
+            blockTrackers = null,
+            httpsEverywhere = null,
+            stripParams = null,
+            fingerprintProtection = null,
+            blockThirdPartyCookies = null,
+            deletionInterval = interval
+        )
+        applyHistoryDeletionPolicy(interval)
+    }
+
+    fun applyHistoryDeletionPolicy(overrideInterval: HistoryDeletionInterval? = null) {
+        val interval = overrideInterval ?: uiState.value.privacyConfig.historyDeletionInterval
+        if (interval == HistoryDeletionInterval.NEVER) return
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val cutoff = if (interval == HistoryDeletionInterval.ON_APP_CLOSE) {
+                now
+            } else {
+                now - interval.intervalMillis
+            }
+            repository.pruneHistoryOlderThan(cutoff)
         }
     }
 
@@ -1685,9 +2199,25 @@ class ZenBrowserViewModel(
 
     fun installExtensionFromAmoPage(url: String, pageTitle: String?) {
         val lower = url.lowercase()
+        if (lower.endsWith(".user.js") || lower.contains(".user.js?")) {
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val content = java.net.URL(url).readText()
+                    installUserscript(content, fallbackUrl = url, fallbackName = pageTitle)
+                } catch (e: Exception) {
+                    installUserscript(
+                        "// ==UserScript==\n// @name ${pageTitle ?: "Userscript"}\n// @match *://*/*\n// ==/UserScript==\nconsole.log('Zen Userscript Active');",
+                        fallbackUrl = url,
+                        fallbackName = pageTitle
+                    )
+                }
+            }
+            return
+        }
+
         val existingList = uiState.value.firefoxExtensions
         val matchedBuiltIn = existingList.find {
-            it.amoSlug.isNotBlank() && lower.contains(it.amoSlug.lowercase())
+            it.amoSlug.isNotBlank() && (lower.contains("/${it.amoSlug.lowercase()}/") || lower.endsWith("/${it.amoSlug.lowercase()}") || lower.contains(it.amoSlug.lowercase()))
         }
         viewModelScope.launch {
             if (matchedBuiltIn != null) {
@@ -1696,14 +2226,19 @@ class ZenBrowserViewModel(
                 )
                 showBanner("Installed '${matchedBuiltIn.name}' from Mozilla Add-ons")
             } else {
-                val slug = lower.substringAfter("/addon/", "").substringBefore("/").substringBefore("?")
+                val slug = if (lower.contains("/addon/")) {
+                    lower.substringAfter("/addon/", "").substringBefore("/").substringBefore("?")
+                } else {
+                    url.substringAfterLast("/").substringBefore("?").replace(".xpi", "")
+                }
                 val cleanTitle = pageTitle
                     ?.substringBefore(" – Get this Extension")
                     ?.substringBefore(" — Get this Extension")
                     ?.substringBefore(" - Android")
+                    ?.substringBefore(" — Firefox")
                     ?.trim()
                     ?.takeIf { it.isNotBlank() }
-                    ?: slug.replace("-", " ").replaceFirstChar { it.uppercase() }.ifBlank { "Mozilla Add-on" }
+                    ?: slug.replace("-", " ").replaceFirstChar { it.uppercase() }.ifBlank { "Desktop Extension" }
 
                 val ext = FirefoxExtensionEntity(
                     id = "ff_amo_${slug.ifBlank { UUID.randomUUID().toString().take(6) }}",
@@ -1711,7 +2246,7 @@ class ZenBrowserViewModel(
                     author = "Mozilla Add-ons (AMO)",
                     version = "1.0.0",
                     description = "Installed directly from addons.mozilla.org ($slug)",
-                    category = "Mozilla Add-on",
+                    category = "Desktop WebExtension",
                     permissions = "Access your data for all websites",
                     isInstalled = true,
                     isEnabled = true,
@@ -1720,10 +2255,10 @@ class ZenBrowserViewModel(
                     matchPatterns = "*://*/*",
                     amoSlug = slug,
                     cssPayload = "",
-                    jsPayload = "console.log('Zen AMO Extension Active: ${cleanTitle.replace("'", "")}');"
+                    jsPayload = "console.log('Zen Desktop Extension Active: ${cleanTitle.replace("'", "")}');"
                 )
                 repository.insertFirefoxExtension(ext)
-                showBanner("Installed '$cleanTitle' to Zen Browser")
+                showBanner("Installed Desktop Extension '$cleanTitle' to Zen Browser")
             }
         }
     }
@@ -1758,6 +2293,83 @@ class ZenBrowserViewModel(
         viewModelScope.launch {
             repository.insertFirefoxExtension(ext)
             showBanner("Added custom Firefox extension '$cleanName'")
+        }
+    }
+
+    fun installUserscript(rawScript: String, fallbackUrl: String = "", fallbackName: String? = null) {
+        viewModelScope.launch {
+            var scriptName = fallbackName ?: fallbackUrl.substringAfterLast("/").substringBefore("?").ifBlank { "Desktop Userscript" }
+            var scriptVersion = "1.0.0"
+            var scriptDesc = "Desktop Userscript installed into Zen Browser"
+            var scriptAuthor = "Userscript Author"
+            var scriptRunAt = "document_idle"
+            val matchPatterns = mutableListOf<String>()
+
+            val lines = rawScript.lines()
+            var insideHeader = false
+            for (line in lines) {
+                val trimmed = line.trim()
+                if (trimmed.startsWith("// ==UserScript==", ignoreCase = true)) {
+                    insideHeader = true
+                    continue
+                }
+                if (trimmed.startsWith("// ==/UserScript==", ignoreCase = true)) {
+                    insideHeader = false
+                    break
+                }
+                if (insideHeader) {
+                    when {
+                        trimmed.startsWith("// @name", ignoreCase = true) -> {
+                            val nameVal = trimmed.substringAfter("@name").trim()
+                            if (nameVal.isNotBlank()) scriptName = nameVal
+                        }
+                        trimmed.startsWith("// @version", ignoreCase = true) -> {
+                            val verVal = trimmed.substringAfter("@version").trim()
+                            if (verVal.isNotBlank()) scriptVersion = verVal
+                        }
+                        trimmed.startsWith("// @description", ignoreCase = true) -> {
+                            val descVal = trimmed.substringAfter("@description").trim()
+                            if (descVal.isNotBlank()) scriptDesc = descVal
+                        }
+                        trimmed.startsWith("// @author", ignoreCase = true) -> {
+                            val authVal = trimmed.substringAfter("@author").trim()
+                            if (authVal.isNotBlank()) scriptAuthor = authVal
+                        }
+                        trimmed.startsWith("// @match", ignoreCase = true) -> {
+                            val matchVal = trimmed.substringAfter("@match").trim()
+                            if (matchVal.isNotBlank()) matchPatterns.add(matchVal)
+                        }
+                        trimmed.startsWith("// @include", ignoreCase = true) -> {
+                            val incVal = trimmed.substringAfter("@include").trim()
+                            if (incVal.isNotBlank()) matchPatterns.add(incVal)
+                        }
+                        trimmed.startsWith("// @run-at", ignoreCase = true) -> {
+                            val runVal = trimmed.substringAfter("@run-at").trim()
+                            if (runVal.isNotBlank()) scriptRunAt = runVal
+                        }
+                    }
+                }
+            }
+
+            val ext = FirefoxExtensionEntity(
+                id = "ff_userjs_${UUID.randomUUID().toString().take(8)}",
+                name = scriptName,
+                author = scriptAuthor,
+                version = scriptVersion,
+                description = scriptDesc,
+                category = "Userscript",
+                permissions = "Access your data for matching sites",
+                isInstalled = true,
+                isEnabled = true,
+                allowInPrivate = true,
+                runAt = scriptRunAt,
+                matchPatterns = if (matchPatterns.isNotEmpty()) matchPatterns.joinToString(", ") else "*://*/*",
+                amoSlug = fallbackUrl.substringAfterLast("/").substringBefore("?"),
+                cssPayload = "",
+                jsPayload = rawScript
+            )
+            repository.insertFirefoxExtension(ext)
+            showBanner("Installed Desktop Userscript '$scriptName' v$scriptVersion")
         }
     }
 
@@ -1903,6 +2515,8 @@ class ZenBrowserViewModel(
     }
 
     fun clearBrowsingDataAndUnpinnedTabs(onCleared: () -> Unit) {
+        tabHistoryStacks.clear()
+        tabForwardStacks.clear()
         viewModelScope.launch {
             repository.clearUnpinnedTabs()
             onCleared()
@@ -1910,11 +2524,15 @@ class ZenBrowserViewModel(
     }
 
     fun updateNavigationProgress(progress: Int, canBack: Boolean, canForward: Boolean) {
+        val currentTab = uiState.value.focusedTab
+        val tabId = currentTab?.id ?: ""
+        val canGoBackEffective = canBack || (tabId.isNotBlank() && canTabHistoryGoBack(tabId))
+        val canGoForwardEffective = canForward || (tabId.isNotBlank() && canTabForwardGoForward(tabId))
         sessionState.update {
             it.copy(
                 pageLoadingProgress = progress,
-                canGoBack = canBack,
-                canGoForward = canForward
+                canGoBack = canGoBackEffective,
+                canGoForward = canGoForwardEffective
             )
         }
     }
@@ -1933,7 +2551,125 @@ class ZenBrowserViewModel(
     }
 
     fun showBanner(message: String?) {
-        sessionState.update { it.copy(statusBannerMessage = message) }
+        val cfg = uiState.value.sidebarConfig
+        val filtered = if (message != null) {
+            val isTabClose = message.contains("Tab closed", ignoreCase = true)
+            if (isTabClose && !cfg.showTabCloseNotification) null
+            else if (!cfg.showActionNotifications) null
+            else message
+        } else null
+        sessionState.update { it.copy(statusBannerMessage = filtered) }
+    }
+
+
+    private var searchSuggestionJob: Job? = null
+
+    fun clearSearchSuggestions() {
+        searchSuggestionJob?.cancel()
+        sessionState.update { it.copy(searchSuggestions = emptyList()) }
+    }
+
+    fun fetchSearchSuggestions(rawQuery: String) {
+        val query = rawQuery.trim()
+        if (query.isEmpty() || query.startsWith("zen://")) {
+            clearSearchSuggestions()
+            return
+        }
+
+        searchSuggestionJob?.cancel()
+        searchSuggestionJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val state = uiState.value
+            val localResults = mutableListOf<com.example.data.SearchSuggestionItem>()
+
+            val bookmarkMatches = state.allTabs
+                .filter { it.isBookmarked && (it.title.contains(query, ignoreCase = true) || it.url.contains(query, ignoreCase = true)) }
+                .take(3)
+                .map {
+                    com.example.data.SearchSuggestionItem(
+                        title = it.title.ifBlank { it.url },
+                        subtitle = it.url,
+                        target = it.url,
+                        type = com.example.data.SuggestionType.BOOKMARK
+                    )
+                }
+            localResults.addAll(bookmarkMatches)
+
+            val historyMatches = state.historyEntries
+                .filter { it.title.contains(query, ignoreCase = true) || it.url.contains(query, ignoreCase = true) }
+                .distinctBy { it.url }
+                .take(3)
+                .map {
+                    com.example.data.SearchSuggestionItem(
+                        title = it.title.ifBlank { it.url },
+                        subtitle = it.url,
+                        target = it.url,
+                        type = com.example.data.SuggestionType.HISTORY
+                    )
+                }
+            localResults.addAll(historyMatches)
+
+            localResults.add(
+                0,
+                com.example.data.SearchSuggestionItem(
+                    title = query,
+                    subtitle = "Search ${state.activeSearchEngineLabel}",
+                    target = query,
+                    type = com.example.data.SuggestionType.SEARCH_QUERY
+                )
+            )
+
+            sessionState.update { it.copy(searchSuggestions = localResults) }
+
+            delay(150)
+
+            try {
+                val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+                val url = "https://duckduckgo.com/ac/?q=$encoded&type=list"
+                val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                connection.connectTimeout = 1500
+                connection.readTimeout = 1500
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)")
+
+                if (connection.responseCode == 200) {
+                    val responseText = connection.inputStream.bufferedReader().use { it.readText() }
+                    val remoteSuggestions = mutableListOf<String>()
+
+                    val jsonArray = org.json.JSONArray(responseText)
+                    if (jsonArray.length() >= 2 && jsonArray.optJSONArray(1) != null) {
+                        val items = jsonArray.getJSONArray(1)
+                        for (i in 0 until items.length()) {
+                            val text = items.optString(i)
+                            if (text.isNotBlank() && !text.equals(query, ignoreCase = true)) {
+                                remoteSuggestions.add(text)
+                            }
+                        }
+                    } else {
+                        for (i in 0 until jsonArray.length()) {
+                            val obj = jsonArray.optJSONObject(i)
+                            val phrase = obj?.optString("phrase") ?: jsonArray.optString(i)
+                            if (phrase.isNotBlank() && !phrase.equals(query, ignoreCase = true)) {
+                                remoteSuggestions.add(phrase)
+                            }
+                        }
+                    }
+
+                    val webQueryItems = remoteSuggestions.distinct().take(6).map {
+                        com.example.data.SearchSuggestionItem(
+                            title = it,
+                            subtitle = null,
+                            target = it,
+                            type = com.example.data.SuggestionType.SEARCH_QUERY
+                        )
+                    }
+
+                    val combined = (localResults.take(1) + bookmarkMatches + historyMatches + webQueryItems).distinctBy { it.title.lowercase() }
+                    sessionState.update { it.copy(searchSuggestions = combined) }
+                }
+            } catch (e: Exception) {
+                // Ignore network exceptions for search suggestions
+            }
+        }
     }
 
     class Factory(private val repository: ZenRepository) : ViewModelProvider.Factory {

@@ -93,6 +93,17 @@ data class DownloadItemEntity(
     val status: String = "completed"
 )
 
+@Entity(tableName = "passwords")
+data class PasswordEntity(
+    @PrimaryKey val id: String = java.util.UUID.randomUUID().toString(),
+    val domain: String,
+    val url: String,
+    val username: String,
+    val password: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
 enum class SidebarPosition {
     LEFT, RIGHT
 }
@@ -165,7 +176,22 @@ enum class SidebarToolItem(val id: String, val label: String) {
     COMPACT_MODE("compact_mode", "Compact Mode Button"),
     CLEAR_TABS("clear_tabs", "Clear Unpinned Tabs Button"),
     LIBRARY("library", "Bookmarks, History & Downloads"),
+    DESKTOP_MODE("desktop_mode", "Desktop Site Toggle"),
     SETTINGS_BUTTON("settings_button", "Customize / Settings Button")
+}
+
+enum class TopToolbarToolItem(val id: String, val label: String) {
+    BACK("back", "Back Navigation"),
+    FORWARD("forward", "Forward Navigation"),
+    RELOAD("reload", "Reload Page"),
+    HOME("home", "Home Button"),
+    AT_A_GLANCE("at_a_glance", "At a Glance (Peek Mode)"),
+    TRANSLATE("translate", "Translate Page"),
+    READER_MODE("reader_mode", "Reader View"),
+    EXTENSIONS("extensions", "Firefox Add-ons & Extensions"),
+    PRIVACY_SHIELD("privacy_shield", "Tracking Protection Shield"),
+    DESKTOP_MODE("desktop_mode", "Desktop Site Toggle"),
+    EDIT_LAYOUT("edit_layout", "Edit Layout Button")
 }
 
 enum class SearchEngine(val id: String, val label: String, val searchUrlTemplate: String, val homeDomain: String) {
@@ -194,6 +220,30 @@ enum class NewTabSwipeGestureAction(val label: String) {
     OPEN_NORMAL_TAB("Open Normal Tab"),
     NONE("Disabled")
 }
+
+enum class NewTabPosition(val id: String, val label: String) {
+    BOTTOM("bottom", "Bottom (Default)"),
+    TOP("top", "Top")
+}
+
+enum class HorizontalSwipeNavigationMode(val id: String, val label: String, val description: String) {
+    SWIPE_RIGHT_PANEL_LEFT_BACK(
+        "right_panel_left_back",
+        "Swipe Right: Side Panel • Swipe Left: Go Back (Default)",
+        "Swiping right opens the side panel; swiping left navigates back in history"
+    ),
+    SWIPE_LEFT_PANEL_RIGHT_BACK(
+        "left_panel_right_back",
+        "Swipe Left: Side Panel • Swipe Right: Go Back",
+        "Swiping left opens the side panel; swiping right navigates back in history"
+    )
+}
+
+data class HistoryNavEntry(
+    val title: String,
+    val url: String,
+    val stepsBack: Int
+)
 
 enum class StartupBehavior(val label: String, val description: String) {
     UNLOAD_AND_HOMEPAGE(
@@ -260,9 +310,22 @@ data class SidebarConfig(
     val showPinnedTabs: Boolean = true,
     val showWorkspaceStripInBottomBar: Boolean = false,
     val showTabFaviconBadges: Boolean = true,
-    // Side Panel Navigation Controls & Back Swipe Gesture Mode (Single Swipe: Left = Side Panel, Right = Go Back)
+    // Side Panel Navigation Controls & Back Swipe Gesture Mode (Go back in web history first, then open side panel)
     val showSidebarNavControls: Boolean = true,
-    val backSwipeSidebarMode: BackSwipeSidebarMode = BackSwipeSidebarMode.LEFT_SIDEBAR_RIGHT_BACK,
+    val backSwipeSidebarMode: BackSwipeSidebarMode = BackSwipeSidebarMode.GO_BACK_THEN_SIDEBAR,
+    val horizontalSwipeMode: HorizontalSwipeNavigationMode = HorizontalSwipeNavigationMode.SWIPE_RIGHT_PANEL_LEFT_BACK,
+    val openInNewTab: Boolean = false,
+    val openHistoryInNewTab: Boolean = true,
+    val switchToNewTabImmediately: Boolean = false,
+    val newTabPosition: NewTabPosition = NewTabPosition.BOTTOM,
+    val showTabCloseNotification: Boolean = true,
+    val showActionNotifications: Boolean = true,
+    val customAiOverviewText: String = "",
+    val fakeSearchQueryTrigger: String = "? : who is the main character",
+    val fakeSearchHeadline: String = "",
+    val fakeSearchSnippet: String = "",
+    val backgroundPlayEnabled: Boolean = true,
+    val playInWindowPipEnabled: Boolean = true,
     // Side Panel UI Size Scale (0.75f = 75% Compact to 1.35f = 135% Large, Default 1.0f = 100%)
     val sidebarUiScale: Float = 1.0f,
     // Side Panel Blur (Default 50% = 0.5f), Opacity (Default 85% = 0.85f), Liquid Glass mode, and Side Panel Color
@@ -299,6 +362,7 @@ data class SidebarConfig(
     val edgeBarLengthDp: Float = 96f,
     val edgeBarVerticalOffsetFraction: Float = 0.5f,
     val hideEdgeBarInCompactMode: Boolean = false,
+    val hideEdgeBarAlways: Boolean = false,
     val openLinksInGlanceAutomatically: Boolean = false,
     val sectionOrder: List<SidebarSectionType> = listOf(
         SidebarSectionType.ESSENTIALS,
@@ -307,11 +371,32 @@ data class SidebarConfig(
         SidebarSectionType.QUICK_TOOLS,
         SidebarSectionType.WORKSPACES
     ),
-    val enabledSidebarTools: List<SidebarToolItem> = SidebarToolItem.entries.toList()
+    val enabledSidebarTools: List<SidebarToolItem> = SidebarToolItem.entries.toList(),
+    val enabledTopToolbarTools: List<TopToolbarToolItem> = listOf(
+        TopToolbarToolItem.BACK,
+        TopToolbarToolItem.FORWARD,
+        TopToolbarToolItem.RELOAD,
+        TopToolbarToolItem.HOME,
+        TopToolbarToolItem.AT_A_GLANCE,
+        TopToolbarToolItem.TRANSLATE,
+        TopToolbarToolItem.EDIT_LAYOUT
+    )
 )
+
+enum class AdBlockerLevel(val id: String, val label: String, val description: String) {
+    OFF("off", "Off", "No ad blocking; all ads and trackers allowed"),
+    NORMAL("normal", "Normal", "Standard ad and tracker domain blocking (recommended)"),
+    HIGH("high", "High", "Aggressive blocking including third-party scripts, ads, and cookies");
+
+    companion object {
+        fun fromId(id: String): AdBlockerLevel =
+            entries.find { it.id.equals(id, ignoreCase = true) } ?: NORMAL
+    }
+}
 
 data class PrivacyConfig(
     val blockTrackersAndAds: Boolean = true,
+    val adBlockerLevel: AdBlockerLevel = AdBlockerLevel.HIGH,
     val httpsEverywhere: Boolean = true,
     val stripTrackingParams: Boolean = true,
     val fingerprintProtection: Boolean = true,
@@ -328,4 +413,27 @@ data class BlockedTrackerEvent(
     val domain: String,
     val category: String,
     val timestamp: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "offline_pages")
+data class OfflinePageEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val url: String,
+    val htmlContent: String,
+    val timestamp: Long = System.currentTimeMillis(),
+    val sizeBytes: Long = 0L
+)
+
+enum class SuggestionType {
+    SEARCH_QUERY,
+    HISTORY,
+    BOOKMARK
+}
+
+data class SearchSuggestionItem(
+    val title: String,
+    val subtitle: String? = null,
+    val target: String,
+    val type: SuggestionType = SuggestionType.SEARCH_QUERY
 )

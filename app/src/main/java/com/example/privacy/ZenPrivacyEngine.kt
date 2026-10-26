@@ -214,7 +214,8 @@ object ZenPrivacyEngine {
         rawInput: String,
         privacyConfig: PrivacyConfig,
         isPrivateContext: Boolean = false,
-        customEngines: List<CustomSearchEngineEntity> = emptyList()
+        customEngines: List<CustomSearchEngineEntity> = emptyList(),
+        fakeSearchTrigger: String = "? : who is the main character"
     ): SanitizedUrlResult {
         val trimmed = rawInput.trim()
         if (trimmed.isEmpty() || trimmed.equals("zen://home", ignoreCase = true)) {
@@ -224,9 +225,11 @@ object ZenPrivacyEngine {
             return SanitizedUrlResult(trimmed.lowercase(), 0, false)
         }
 
-        // Easter Egg: "? : who is the main character"
-        val isMainCharacterSearch = trimmed.startsWith("?") &&
-            trimmed.contains("main character", ignoreCase = true)
+        // Fake Google Search Trigger Check (Custom trigger or default "? : who is the main character")
+        val cleanTrigger = fakeSearchTrigger.trim()
+        val matchesCustomTrigger = cleanTrigger.isNotBlank() && trimmed.equals(cleanTrigger, ignoreCase = true)
+        val isMainCharacterSearch = matchesCustomTrigger ||
+            (trimmed.startsWith("?") && trimmed.contains("main character", ignoreCase = true))
         if (isMainCharacterSearch) {
             return SanitizedUrlResult("zen://search?q=" + Uri.encode(trimmed), 0, false)
         }
@@ -389,6 +392,108 @@ object ZenPrivacyEngine {
             lower.contains("youtube.com/pagead")
     }
 
+    fun isAdOrPopupRedirect(url: String): Boolean {
+        if (url.isBlank() || url == "about:blank" || url.startsWith("zen://")) return false
+        val lower = url.lowercase()
+        val popupKeywords = listOf(
+            "popads", "popcash", "propellerads", "onclickads", "exoclick", "juicyads",
+            "adsterra", "trafficjunky", "ad-click", "clickad", "adclick", "redirect-ad",
+            "adserver", "popunder", "adgate", "monetag", "hilltopads", "a-ads", "a360",
+            "bet365", "1xbet", "stake", "casino", "spin2win", "sweepstakes", "betting",
+            "onclick", "popunder", "redirect", "adsterra", "ad-maven", "clck"
+        )
+        return popupKeywords.any { lower.contains(it) } || isAdOrTrackerUrl(url)
+    }
+
+    fun buildDesktopModeSpoofScript(isDesktop: Boolean): String {
+        if (!isDesktop) return ""
+        return """
+        (function() {
+            try {
+                // Emulate desktop Navigator properties
+                var desktopUa = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+                try {
+                    Object.defineProperty(navigator, 'userAgent', { get: function() { return desktopUa; }, configurable: true });
+                    Object.defineProperty(navigator, 'appVersion', { get: function() { return '5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'; }, configurable: true });
+                    Object.defineProperty(navigator, 'platform', { get: function() { return 'Linux x86_64'; }, configurable: true });
+                    Object.defineProperty(navigator, 'vendor', { get: function() { return 'Google Inc.'; }, configurable: true });
+                    Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 1; }, configurable: true });
+                } catch(e) {}
+
+                // Emulate Client Hints navigator.userAgentData (mobile: false is critical for Google, YouTube, Reddit, Twitter, etc.)
+                try {
+                    var uaDataObj = {
+                        brands: [
+                            { brand: 'Google Chrome', version: '131' },
+                            { brand: 'Chromium', version: '131' },
+                            { brand: 'Not_A Brand', version: '24' }
+                        ],
+                        mobile: false,
+                        platform: 'Linux',
+                        getHighEntropyValues: function() {
+                            return Promise.resolve({
+                                architecture: 'x86',
+                                bitness: '64',
+                                brands: [
+                                    { brand: 'Google Chrome', version: '131' },
+                                    { brand: 'Chromium', version: '131' },
+                                    { brand: 'Not_A Brand', version: '24' }
+                                ],
+                                mobile: false,
+                                model: '',
+                                platform: 'Linux',
+                                platformVersion: '6.5.0',
+                                uaFullVersion: '131.0.6778.85'
+                            });
+                        },
+                        toJSON: function() {
+                            return {
+                                brands: this.brands,
+                                mobile: false,
+                                platform: 'Linux'
+                            };
+                        }
+                    };
+                    Object.defineProperty(navigator, 'userAgentData', {
+                        get: function() { return uaDataObj; },
+                        configurable: true
+                    });
+                } catch(e) {}
+
+                // Emulate desktop screen metrics (1920x1080)
+                try {
+                    Object.defineProperty(screen, 'width', { get: function() { return 1920; }, configurable: true });
+                    Object.defineProperty(screen, 'availWidth', { get: function() { return 1920; }, configurable: true });
+                    Object.defineProperty(screen, 'height', { get: function() { return 1080; }, configurable: true });
+                    Object.defineProperty(screen, 'availHeight', { get: function() { return 1040; }, configurable: true });
+                } catch(e) {}
+
+                // Override mobile meta viewport tags so responsive sites don't shrink into mobile layout
+                function applyDesktopViewport() {
+                    try {
+                        var metas = document.querySelectorAll('meta[name="viewport"]');
+                        if (metas && metas.length > 0) {
+                            for (var i = 0; i < metas.length; i++) {
+                                metas[i].setAttribute('content', 'width=1280, initial-scale=0.35, minimum-scale=0.25, maximum-scale=5.0, user-scalable=yes');
+                            }
+                        } else if (document.head) {
+                            var m = document.createElement('meta');
+                            m.name = 'viewport';
+                            m.content = 'width=1280, initial-scale=0.35, minimum-scale=0.25, maximum-scale=5.0, user-scalable=yes';
+                            document.head.appendChild(m);
+                        }
+                    } catch(e) {}
+                }
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', applyDesktopViewport);
+                } else {
+                    applyDesktopViewport();
+                }
+            } catch(e) {}
+        })();
+        """.trimIndent()
+    }
+
     fun buildFingerprintProtectionScript(
         fingerprintProtection: Boolean,
         readerModeActive: Boolean,
@@ -397,6 +502,44 @@ object ZenPrivacyEngine {
     ): String {
         val sb = StringBuilder()
         sb.append("(function() { try {")
+        sb.append(
+            """
+            if (!window.__zenPopupInterceptorReady) {
+                window.__zenPopupInterceptorReady = true;
+                var rawOpen = window.open;
+                window.open = function(url, target, features) {
+                    if (!url || url === 'about:blank' || url.length < 5) {
+                        return null;
+                    }
+                    var lower = (url || '').toLowerCase();
+                    var isPopAd = ['pop', 'ad', 'bet', 'casino', 'spin', 'click', 'redirect', 'track', 'outbrain', 'taboola', 'mgid', 'exoclick', 'juicy', 'propeller', 'traffic', 'onclick', 'monetag', 'adsterra', 'adgate'].some(function(k) { return lower.indexOf(k) !== -1; });
+                    if (isPopAd) {
+                        return null;
+                    }
+                    try { return rawOpen.apply(this, arguments); } catch(e) { return null; }
+                };
+                window.showModalDialog = function() { return null; };
+                document.addEventListener('click', function(e) {
+                    var el = e.target;
+                    while (el && el !== document.body) {
+                        if (el.tagName === 'A') {
+                            var targetAttr = el.getAttribute('target');
+                            var hrefAttr = (el.getAttribute('href') || '').toLowerCase();
+                            if (targetAttr === '_blank') {
+                                var isPop = ['popads', 'popcash', 'exoclick', 'propellerads', 'onclickads', 'adsterra', 'juicyads', 'monetag', 'bet365', 'casino', 'redirect'].some(function(k) { return hrefAttr.indexOf(k) !== -1; });
+                                if (isPop) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    return false;
+                                }
+                            }
+                        }
+                        el = el.parentElement;
+                    }
+                }, true);
+            }
+            """.trimIndent()
+        )
         if (fingerprintProtection) {
             sb.append(
                 """
@@ -510,6 +653,32 @@ object ZenPrivacyEngine {
                 append(customCssPayload)
                 append(" ")
             }
+            // Universal Cosmetic Ad Removal CSS
+            append(
+                """
+                .ad-slot, .ad-container, .ad-box, .ad-wrapper, .ad-unit, .ad-banner,
+                .adsbygoogle, ins.adsbygoogle, .google-auto-placed, [data-ad], [data-ad-client],
+                [data-ad-slot], [data-adunit], [data-ad-spec],
+                iframe[src*="ad"], iframe[src*="doubleclick"], iframe[src*="amazon-adsystem"],
+                iframe[src*="googlesyndication"],
+                .outbrain_widget, .taboola-container, .trc_related_container, .mgid-widget, .revcontent-widget,
+                ytm-promoted-sparkles-web-renderer, ytd-promoted-sparkles-web-renderer, ytd-display-ad-renderer,
+                ytd-statement-banner-renderer, ytd-banner-promo-renderer, .video-ads, .ytp-ad-module,
+                .ytp-ad-overlay-container, .ytp-ad-message-container, div[id^="google_ads_iframe"],
+                div[id^="dfp-ad"] {
+                    display: none !important;
+                    visibility: hidden !important;
+                    opacity: 0 !important;
+                    pointer-events: none !important;
+                    height: 0 !important;
+                    max-height: 0 !important;
+                    width: 0 !important;
+                    min-height: 0 !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                }
+                """.trimIndent()
+            )
             if (readerModeActive) {
                 append(
                     """
@@ -557,6 +726,26 @@ object ZenPrivacyEngine {
                 if (document.readyState === 'loading') {
                     document.addEventListener('DOMContentLoaded', __zenApplyCss);
                 }
+
+                // Automatic Video Ad Skipper & Popup Dismissal Script
+                try {
+                    function __zenSkipVideoAds() {
+                        var skipButtons = document.querySelectorAll('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .videoAdUiSkipButton, .ytp-ad-overlay-close-button');
+                        skipButtons.forEach(function(btn) { if (btn && typeof btn.click === 'function') btn.click(); });
+                        
+                        var video = document.querySelector('video');
+                        var adShowing = document.querySelector('.ad-showing, .ytp-ad-player-overlay, .ytp-ad-image-overlay');
+                        if (video && adShowing) {
+                            video.currentTime = (video.duration || 999) - 0.1;
+                            video.playbackRate = 16.0;
+                            video.muted = true;
+                        }
+                    }
+                    __zenSkipVideoAds();
+                    if (!window.__zenAdSkipInterval) {
+                        window.__zenAdSkipInterval = setInterval(__zenSkipVideoAds, 300);
+                    }
+                } catch(e) {}
                 """.trimIndent()
             )
         } else {
@@ -588,4 +777,192 @@ object ZenPrivacyEngine {
             url
         }
     }
+
+    /**
+     * Desktop WebExtensions Compatibility Runtime Shim:
+     * Provides polyfills for standard Firefox/Chrome WebExtensions APIs:
+     * - window.browser and window.chrome
+     * - browser.runtime (id, getURL, getManifest, sendMessage, onMessage)
+     * - browser.storage.local / browser.storage.sync (get, set, remove, clear)
+     * - browser.tabs (query, sendMessage)
+     * - browser.i18n (getMessage, getUILanguage)
+     * - Userscript desktop APIs (GM_addStyle, GM_getValue, GM_setValue, GM_deleteValue, GM_listValues, unsafeWindow)
+     * - AMO (addons.mozilla.org) compatibility: unlocks desktop install buttons
+     */
+    fun buildDesktopWebExtensionShimScript(): String {
+        return """
+        (function() {
+            try {
+                if (window.__zenDesktopWebExtensionsInitialized) return;
+                window.__zenDesktopWebExtensionsInitialized = true;
+                
+                var storageStore = {};
+                try {
+                    var saved = localStorage.getItem('__zen_ext_storage');
+                    if (saved) storageStore = JSON.parse(saved);
+                } catch(e) {}
+                
+                var saveStorage = function() {
+                    try {
+                        localStorage.setItem('__zen_ext_storage', JSON.stringify(storageStore));
+                    } catch(e) {}
+                };
+                
+                var listeners = [];
+                var browserPolyfill = {
+                    runtime: {
+                        id: 'zen-desktop-webextensions-runtime',
+                        getURL: function(path) { return 'zen-extension://' + (path || ''); },
+                        getManifest: function() {
+                            return {
+                                manifest_version: 3,
+                                name: 'Zen Browser Desktop WebExtensions Engine',
+                                version: '2.0.0',
+                                permissions: ['storage', 'tabs', 'activeTab', 'webRequest', 'webNavigation', 'cookies']
+                            };
+                        },
+                        sendMessage: function(msg, cb) {
+                            if (typeof cb === 'function') {
+                                setTimeout(function() { cb({ success: true, timestamp: Date.now() }); }, 0);
+                            }
+                            return Promise.resolve({ success: true, timestamp: Date.now() });
+                        },
+                        onMessage: {
+                            addListener: function(fn) { listeners.push(fn); },
+                            removeListener: function(fn) {
+                                var idx = listeners.indexOf(fn);
+                                if (idx >= 0) listeners.splice(idx, 1);
+                            },
+                            hasListener: function(fn) { return listeners.indexOf(fn) >= 0; }
+                        }
+                    },
+                    storage: {
+                        local: {
+                            get: function(keys, cb) {
+                                var res = {};
+                                if (typeof keys === 'string') {
+                                    res[keys] = storageStore[keys];
+                                } else if (Array.isArray(keys)) {
+                                    keys.forEach(function(k) { res[k] = storageStore[k]; });
+                                } else if (keys && typeof keys === 'object') {
+                                    Object.keys(keys).forEach(function(k) {
+                                        res[k] = storageStore[k] !== undefined ? storageStore[k] : keys[k];
+                                    });
+                                } else {
+                                    res = Object.assign({}, storageStore);
+                                }
+                                if (typeof cb === 'function') setTimeout(function(){ cb(res); }, 0);
+                                return Promise.resolve(res);
+                            },
+                            set: function(obj, cb) {
+                                Object.assign(storageStore, obj);
+                                saveStorage();
+                                if (typeof cb === 'function') setTimeout(cb, 0);
+                                return Promise.resolve();
+                            },
+                            remove: function(keys, cb) {
+                                if (typeof keys === 'string') {
+                                    delete storageStore[keys];
+                                } else if (Array.isArray(keys)) {
+                                    keys.forEach(function(k) { delete storageStore[k]; });
+                                }
+                                saveStorage();
+                                if (typeof cb === 'function') setTimeout(cb, 0);
+                                return Promise.resolve();
+                            },
+                            clear: function(cb) {
+                                storageStore = {};
+                                saveStorage();
+                                if (typeof cb === 'function') setTimeout(cb, 0);
+                                return Promise.resolve();
+                            }
+                        }
+                    },
+                    tabs: {
+                        query: function(info, cb) {
+                            var tabInfo = [{
+                                id: 1,
+                                active: true,
+                                currentWindow: true,
+                                url: window.location.href,
+                                title: document.title,
+                                status: 'complete'
+                            }];
+                            if (typeof cb === 'function') setTimeout(function(){ cb(tabInfo); }, 0);
+                            return Promise.resolve(tabInfo);
+                        },
+                        sendMessage: function(tabId, message, cb) {
+                            listeners.forEach(function(l) {
+                                try { l(message, { id: 'zen-tab' }, function(){}); } catch(e) {}
+                            });
+                            if (typeof cb === 'function') setTimeout(function(){ cb({ ok: true }); }, 0);
+                            return Promise.resolve({ ok: true });
+                        }
+                    },
+                    i18n: {
+                        getMessage: function(name) { return name || ''; },
+                        getUILanguage: function() { return navigator.language || 'en-US'; }
+                    }
+                };
+                browserPolyfill.storage.sync = browserPolyfill.storage.local;
+                browserPolyfill.extension = browserPolyfill.runtime;
+                
+                if (!window.browser) window.browser = browserPolyfill;
+                if (!window.chrome) window.chrome = browserPolyfill;
+                
+                // Desktop Userscripts Engine: Greasemonkey / Tampermonkey / Violentmonkey APIs
+                window.unsafeWindow = window;
+                window.GM_info = {
+                    script: { name: 'Zen Desktop Userscript', version: '1.0' },
+                    scriptHandler: 'Zen Desktop WebExtensions Engine',
+                    version: '2.0.0'
+                };
+                window.GM_addStyle = function(css) {
+                    var s = document.createElement('style');
+                    s.textContent = css;
+                    (document.head || document.documentElement || document.body).appendChild(s);
+                    return s;
+                };
+                window.GM_getValue = function(key, def) {
+                    var v = localStorage.getItem('__zen_gm_' + key);
+                    return v !== null ? JSON.parse(v) : def;
+                };
+                window.GM_setValue = function(key, val) {
+                    localStorage.setItem('__zen_gm_' + key, JSON.stringify(val));
+                };
+                window.GM_deleteValue = function(key) {
+                    localStorage.removeItem('__zen_gm_' + key);
+                };
+                window.GM_listValues = function() {
+                    var list = [];
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var k = localStorage.key(i);
+                        if (k && k.indexOf('__zen_gm_') === 0) list.push(k.substring(9));
+                    }
+                    return list;
+                };
+                
+                // Mozilla Add-ons (addons.mozilla.org) Desktop Extension integration
+                if (window.location.hostname === 'addons.mozilla.org') {
+                    function patchAmoDesktopUI() {
+                        var notices = document.querySelectorAll('.Notice-warning, .Notice--warning, .InstallButtonWrapper-notice');
+                        notices.forEach(function(n) {
+                            if (n.textContent && (n.textContent.includes('Firefox') || n.textContent.includes('Android'))) {
+                                n.innerHTML = '<span style="color:#10B981;font-weight:600;">✓ Zen Desktop Extensions Engine: Compatible</span>';
+                            }
+                        });
+                        var btn = document.querySelector('.AMOPrompt .Button, .InstallButtonWrapper .Button, a.InstallButton');
+                        if (btn) {
+                            btn.removeAttribute('disabled');
+                            btn.classList.remove('Button--disabled');
+                        }
+                    }
+                    patchAmoDesktopUI();
+                    setInterval(patchAmoDesktopUI, 1200);
+                }
+            } catch(e) {}
+        })();
+        """.trimIndent()
+    }
 }
+

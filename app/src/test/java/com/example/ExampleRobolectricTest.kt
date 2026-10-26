@@ -47,4 +47,22 @@ class ExampleRobolectricTest {
         val allowed = ZenPrivacyEngine.matchTrackerRequest("https://en.m.wikipedia.org/wiki/Zen")
         assertNull(allowed)
     }
+
+    @Test
+    fun `sidebar config defaults new tab position to bottom`() {
+        val config = com.example.data.SidebarConfig()
+        assertEquals(com.example.data.NewTabPosition.BOTTOM, config.newTabPosition)
+    }
+
+    @Test
+    fun `history nav entry formats title and steps back correctly`() {
+        val entry = com.example.data.HistoryNavEntry(
+            title = "Example Domain",
+            url = "https://example.com",
+            stepsBack = 2
+        )
+        assertEquals("Example Domain", entry.title)
+        assertEquals("https://example.com", entry.url)
+        assertEquals(2, entry.stepsBack)
+    }
 }

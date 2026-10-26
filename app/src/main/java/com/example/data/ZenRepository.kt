@@ -26,6 +26,8 @@ class ZenRepository(
     val homeShortcuts: Flow<List<HomeShortcutEntity>> = zenDao.getAllHomeShortcuts()
     val history: Flow<List<HistoryEntryEntity>> = zenDao.getAllHistory()
     val downloads: Flow<List<DownloadItemEntity>> = zenDao.getAllDownloads()
+    val offlinePages: Flow<List<OfflinePageEntity>> = zenDao.getAllOfflinePages()
+    val passwords: Flow<List<PasswordEntity>> = zenDao.getAllPasswords()
 
     private object Keys {
         val SIDEBAR_POSITION = stringPreferencesKey("sidebar_position")
@@ -47,8 +49,20 @@ class ZenRepository(
         val BORDER_GLOW = booleanPreferencesKey("border_glow")
         val SECTION_ORDER = stringPreferencesKey("section_order")
         val ENABLED_SIDEBAR_TOOLS = stringPreferencesKey("enabled_sidebar_tools")
+        val ENABLED_TOP_TOOLBAR_TOOLS = stringPreferencesKey("enabled_top_toolbar_tools")
         val SHOW_SIDEBAR_NAV_CONTROLS = booleanPreferencesKey("show_sidebar_nav_controls")
         val BACK_SWIPE_SIDEBAR_MODE = stringPreferencesKey("back_swipe_sidebar_mode")
+        val OPEN_IN_NEW_TAB = booleanPreferencesKey("open_in_new_tab")
+        val OPEN_HISTORY_IN_NEW_TAB = booleanPreferencesKey("open_history_in_new_tab")
+        val SWITCH_TO_NEW_TAB_IMMEDIATELY = booleanPreferencesKey("switch_to_new_tab_immediately")
+        val SHOW_TAB_CLOSE_NOTIFICATION = booleanPreferencesKey("show_tab_close_notification")
+        val SHOW_ACTION_NOTIFICATIONS = booleanPreferencesKey("show_action_notifications")
+        val CUSTOM_AI_OVERVIEW_TEXT = stringPreferencesKey("custom_ai_overview_text")
+        val FAKE_SEARCH_QUERY_TRIGGER = stringPreferencesKey("fake_search_query_trigger")
+        val FAKE_SEARCH_HEADLINE = stringPreferencesKey("fake_search_headline")
+        val FAKE_SEARCH_SNIPPET = stringPreferencesKey("fake_search_snippet")
+        val BACKGROUND_PLAY_ENABLED = booleanPreferencesKey("background_play_enabled")
+        val PLAY_IN_WINDOW_PIP_ENABLED = booleanPreferencesKey("play_in_window_pip_enabled")
         val SIDEBAR_UI_SCALE = floatPreferencesKey("sidebar_ui_scale")
 
         val TAB_SWIPE_RIGHT = stringPreferencesKey("tab_swipe_right")
@@ -75,8 +89,10 @@ class ZenRepository(
         val EDGE_BAR_LENGTH = floatPreferencesKey("edge_bar_length")
         val EDGE_BAR_OFFSET = floatPreferencesKey("edge_bar_offset")
         val HIDE_EDGE_BAR_COMPACT = booleanPreferencesKey("hide_edge_bar_compact")
+        val HIDE_EDGE_BAR_ALWAYS = booleanPreferencesKey("hide_edge_bar_always")
 
         val BLOCK_TRACKERS = booleanPreferencesKey("block_trackers")
+        val AD_BLOCKER_LEVEL = stringPreferencesKey("ad_blocker_level")
         val HTTPS_EVERYWHERE = booleanPreferencesKey("https_everywhere")
         val STRIP_PARAMS = booleanPreferencesKey("strip_params")
         val FINGERPRINT_PROTECTION = booleanPreferencesKey("fingerprint_protection")
@@ -88,14 +104,17 @@ class ZenRepository(
         val TOTAL_HTTPS_UPGRADES = intPreferencesKey("total_https_upgrades_v2")
         val OPEN_LINKS_IN_GLANCE_AUTO = booleanPreferencesKey("open_links_in_glance_auto")
         val HISTORY_DELETION_INTERVAL = stringPreferencesKey("history_deletion_interval")
+        val LAST_ACTIVE_WORKSPACE_ID = stringPreferencesKey("last_active_workspace_id")
+        val LAST_ACTIVE_TAB_ID = stringPreferencesKey("last_active_tab_id")
     }
 
     val sidebarConfigFlow: Flow<SidebarConfig>? = context?.dataStore?.data?.map { prefs ->
         val orderString = prefs[Keys.SECTION_ORDER]
         val parsedOrder = if (!orderString.isNullOrBlank()) {
-            orderString.split(",").mapNotNull { id ->
+            val list = orderString.split(",").mapNotNull { id ->
                 SidebarSectionType.entries.find { it.id == id }
-            }.takeIf { it.isNotEmpty() }
+            }
+            list.takeIf { it.isNotEmpty() }
         } else null
 
         val toolsString = prefs[Keys.ENABLED_SIDEBAR_TOOLS]
@@ -105,6 +124,17 @@ class ZenRepository(
             } else {
                 toolsString.split(",").mapNotNull { id ->
                     SidebarToolItem.entries.find { it.id == id }
+                }
+            }
+        } else null
+
+        val topToolsString = prefs[Keys.ENABLED_TOP_TOOLBAR_TOOLS]
+        val parsedTopTools = if (topToolsString != null) {
+            if (topToolsString.isBlank()) {
+                emptyList()
+            } else {
+                topToolsString.split(",").mapNotNull { id ->
+                    TopToolbarToolItem.entries.find { it.id == id }
                 }
             }
         } else null
@@ -132,7 +162,7 @@ class ZenRepository(
             showSidebarNavControls = prefs[Keys.SHOW_SIDEBAR_NAV_CONTROLS] ?: true,
             backSwipeSidebarMode = prefs[Keys.BACK_SWIPE_SIDEBAR_MODE]?.let {
                 runCatching { BackSwipeSidebarMode.valueOf(it) }.getOrNull()
-            } ?: BackSwipeSidebarMode.LEFT_SIDEBAR_RIGHT_BACK,
+            } ?: BackSwipeSidebarMode.GO_BACK_THEN_SIDEBAR,
             sidebarUiScale = (prefs[Keys.SIDEBAR_UI_SCALE] ?: 1.0f).coerceIn(0.75f, 1.35f),
             glassBlurIntensity = prefs[Keys.GLASS_INTENSITY] ?: 0.50f,
             sidebarOpacity = prefs[Keys.SIDEBAR_OPACITY] ?: 0.85f,
@@ -176,15 +206,31 @@ class ZenRepository(
             edgeBarLengthDp = prefs[Keys.EDGE_BAR_LENGTH] ?: 96f,
             edgeBarVerticalOffsetFraction = prefs[Keys.EDGE_BAR_OFFSET] ?: 0.5f,
             hideEdgeBarInCompactMode = prefs[Keys.HIDE_EDGE_BAR_COMPACT] ?: false,
+            hideEdgeBarAlways = prefs[Keys.HIDE_EDGE_BAR_ALWAYS] ?: false,
             openLinksInGlanceAutomatically = prefs[Keys.OPEN_LINKS_IN_GLANCE_AUTO] ?: false,
+            openInNewTab = prefs[Keys.OPEN_IN_NEW_TAB] ?: false,
+            openHistoryInNewTab = prefs[Keys.OPEN_HISTORY_IN_NEW_TAB] ?: true,
+            switchToNewTabImmediately = prefs[Keys.SWITCH_TO_NEW_TAB_IMMEDIATELY] ?: false,
+            showTabCloseNotification = prefs[Keys.SHOW_TAB_CLOSE_NOTIFICATION] ?: true,
+            showActionNotifications = prefs[Keys.SHOW_ACTION_NOTIFICATIONS] ?: true,
+            customAiOverviewText = prefs[Keys.CUSTOM_AI_OVERVIEW_TEXT] ?: "",
+            fakeSearchQueryTrigger = prefs[Keys.FAKE_SEARCH_QUERY_TRIGGER] ?: "? : who is the main character",
+            fakeSearchHeadline = prefs[Keys.FAKE_SEARCH_HEADLINE] ?: "",
+            fakeSearchSnippet = prefs[Keys.FAKE_SEARCH_SNIPPET] ?: "",
+            backgroundPlayEnabled = prefs[Keys.BACKGROUND_PLAY_ENABLED] ?: true,
+            playInWindowPipEnabled = prefs[Keys.PLAY_IN_WINDOW_PIP_ENABLED] ?: true,
             sectionOrder = parsedOrder ?: SidebarConfig().sectionOrder,
-            enabledSidebarTools = parsedTools ?: SidebarConfig().enabledSidebarTools
+            enabledSidebarTools = parsedTools ?: SidebarConfig().enabledSidebarTools,
+            enabledTopToolbarTools = parsedTopTools ?: SidebarConfig().enabledTopToolbarTools
         )
     }
 
     val privacyConfigFlow: Flow<PrivacyConfig>? = context?.dataStore?.data?.map { prefs ->
         PrivacyConfig(
             blockTrackersAndAds = prefs[Keys.BLOCK_TRACKERS] ?: true,
+            adBlockerLevel = prefs[Keys.AD_BLOCKER_LEVEL]?.let {
+                runCatching { AdBlockerLevel.valueOf(it) }.getOrNull()
+            } ?: AdBlockerLevel.NORMAL,
             httpsEverywhere = prefs[Keys.HTTPS_EVERYWHERE] ?: true,
             stripTrackingParams = prefs[Keys.STRIP_PARAMS] ?: true,
             fingerprintProtection = prefs[Keys.FINGERPRINT_PROTECTION] ?: true,
@@ -244,15 +290,29 @@ class ZenRepository(
             prefs[Keys.EDGE_BAR_LENGTH] = config.edgeBarLengthDp
             prefs[Keys.EDGE_BAR_OFFSET] = config.edgeBarVerticalOffsetFraction
             prefs[Keys.HIDE_EDGE_BAR_COMPACT] = config.hideEdgeBarInCompactMode
+            prefs[Keys.HIDE_EDGE_BAR_ALWAYS] = config.hideEdgeBarAlways
             prefs[Keys.OPEN_LINKS_IN_GLANCE_AUTO] = config.openLinksInGlanceAutomatically
+            prefs[Keys.OPEN_IN_NEW_TAB] = config.openInNewTab
+            prefs[Keys.OPEN_HISTORY_IN_NEW_TAB] = config.openHistoryInNewTab
+            prefs[Keys.SWITCH_TO_NEW_TAB_IMMEDIATELY] = config.switchToNewTabImmediately
+            prefs[Keys.SHOW_TAB_CLOSE_NOTIFICATION] = config.showTabCloseNotification
+            prefs[Keys.SHOW_ACTION_NOTIFICATIONS] = config.showActionNotifications
+            prefs[Keys.CUSTOM_AI_OVERVIEW_TEXT] = config.customAiOverviewText
+            prefs[Keys.FAKE_SEARCH_QUERY_TRIGGER] = config.fakeSearchQueryTrigger
+            prefs[Keys.FAKE_SEARCH_HEADLINE] = config.fakeSearchHeadline
+            prefs[Keys.FAKE_SEARCH_SNIPPET] = config.fakeSearchSnippet
+            prefs[Keys.BACKGROUND_PLAY_ENABLED] = config.backgroundPlayEnabled
+            prefs[Keys.PLAY_IN_WINDOW_PIP_ENABLED] = config.playInWindowPipEnabled
             prefs[Keys.SECTION_ORDER] = config.sectionOrder.joinToString(",") { it.id }
             prefs[Keys.ENABLED_SIDEBAR_TOOLS] = config.enabledSidebarTools.joinToString(",") { it.id }
+            prefs[Keys.ENABLED_TOP_TOOLBAR_TOOLS] = config.enabledTopToolbarTools.joinToString(",") { it.id }
         }
     }
 
     suspend fun savePrivacyConfig(config: PrivacyConfig) {
         context?.dataStore?.edit { prefs ->
             prefs[Keys.BLOCK_TRACKERS] = config.blockTrackersAndAds
+            prefs[Keys.AD_BLOCKER_LEVEL] = config.adBlockerLevel.name
             prefs[Keys.HTTPS_EVERYWHERE] = config.httpsEverywhere
             prefs[Keys.STRIP_PARAMS] = config.stripTrackingParams
             prefs[Keys.FINGERPRINT_PROTECTION] = config.fingerprintProtection
@@ -268,6 +328,18 @@ class ZenRepository(
 
     suspend fun pruneHistoryOlderThan(cutoffTimestamp: Long) {
         zenDao.deleteHistoryOlderThan(cutoffTimestamp)
+    }
+
+    suspend fun saveLastSessionState(workspaceId: String, tabId: String) {
+        context?.dataStore?.edit { prefs ->
+            if (workspaceId.isNotBlank()) prefs[Keys.LAST_ACTIVE_WORKSPACE_ID] = workspaceId
+            if (tabId.isNotBlank()) prefs[Keys.LAST_ACTIVE_TAB_ID] = tabId
+        }
+    }
+
+    suspend fun getLastSessionState(): Pair<String?, String?> {
+        val prefs = context?.dataStore?.data?.first() ?: return Pair(null, null)
+        return Pair(prefs[Keys.LAST_ACTIVE_WORKSPACE_ID], prefs[Keys.LAST_ACTIVE_TAB_ID])
     }
 
     suspend fun seedDefaultsIfEmpty() {
@@ -655,6 +727,23 @@ class ZenRepository(
                     jsPayload = uBlockJsPayload
                 ),
                 FirefoxExtensionEntity(
+                    id = "ff_privacy_badger",
+                    name = "Privacy Badger",
+                    author = "EFF (Electronic Frontier Foundation)",
+                    version = "2024.7.17",
+                    description = "Automatically learns to block invisible trackers and non-consensual tracking cookies as you browse.",
+                    category = "Privacy & Security",
+                    permissions = "Access your data for all websites, Block trackers, Privacy",
+                    isInstalled = true,
+                    isEnabled = true,
+                    allowInPrivate = true,
+                    runAt = "document_start",
+                    matchPatterns = "*://*/*",
+                    amoSlug = "privacy-badger",
+                    cssPayload = "",
+                    jsPayload = "console.log('Zen: Privacy Badger active');"
+                ),
+                FirefoxExtensionEntity(
                     id = "ff_video_bg_play",
                     name = "Video Background Play Fix",
                     author = "JanH (Mozilla Recommended)",
@@ -904,6 +993,29 @@ class ZenRepository(
                 )
             }
 
+            val existingBadger = currentExtensions.find { it.id == "ff_privacy_badger" }
+            if (existingBadger == null) {
+                zenDao.insertFirefoxExtension(
+                    FirefoxExtensionEntity(
+                        id = "ff_privacy_badger",
+                        name = "Privacy Badger",
+                        author = "EFF (Electronic Frontier Foundation)",
+                        version = "2024.7.17",
+                        description = "Automatically learns to block invisible trackers and non-consensual tracking cookies as you browse.",
+                        category = "Privacy & Security",
+                        permissions = "Access your data for all websites, Block trackers, Privacy",
+                        isInstalled = true,
+                        isEnabled = true,
+                        allowInPrivate = true,
+                        runAt = "document_start",
+                        matchPatterns = "*://*/*",
+                        amoSlug = "privacy-badger",
+                        cssPayload = "",
+                        jsPayload = "console.log('Zen: Privacy Badger active');"
+                    )
+                )
+            }
+
             currentExtensions.find { it.id == "ff_sponsorblock" && it.jsPayload.contains("adVideo.currentTime") }?.let { sb ->
                 zenDao.updateFirefoxExtension(
                     sb.copy(
@@ -986,4 +1098,33 @@ class ZenRepository(
 
     suspend fun clearAllDownloads() =
         zenDao.clearAllDownloads()
+
+    // Offline Pages operations
+    suspend fun insertOfflinePage(page: OfflinePageEntity) =
+        zenDao.insertOfflinePage(page)
+
+    suspend fun getOfflinePageById(id: String) =
+        zenDao.getOfflinePageById(id)
+
+    suspend fun getOfflinePageByUrl(url: String) =
+        zenDao.getOfflinePageByUrl(url)
+
+    suspend fun deleteOfflinePage(id: String) =
+        zenDao.deleteOfflinePage(id)
+
+    suspend fun clearAllOfflinePages() =
+        zenDao.clearAllOfflinePages()
+
+    // Password Manager operations
+    suspend fun getPasswordsForDomain(domain: String) =
+        zenDao.getPasswordsForDomain(domain)
+
+    suspend fun insertPassword(password: PasswordEntity) =
+        zenDao.insertPassword(password)
+
+    suspend fun deletePassword(id: String) =
+        zenDao.deletePassword(id)
+
+    suspend fun clearAllPasswords() =
+        zenDao.clearAllPasswords()
 }

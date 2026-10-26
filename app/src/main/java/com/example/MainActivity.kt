@@ -19,7 +19,14 @@ import com.example.ui.ZenBrowserScreen
 import com.example.ui.ZenBrowserViewModel
 import com.example.ui.theme.ZenBrowserTheme
 
+import android.app.PictureInPictureParams
+import android.content.res.Configuration
+import android.os.Build
+import android.util.Rational
+
 class MainActivity : ComponentActivity() {
+
+    private var viewModelRef: ZenBrowserViewModel? = null
 
     private val database: ZenDatabase by lazy {
         Room.databaseBuilder(
@@ -43,6 +50,7 @@ class MainActivity : ComponentActivity() {
             val browserViewModel: ZenBrowserViewModel = viewModel(
                 factory = ZenBrowserViewModel.Factory(repository)
             )
+            viewModelRef = browserViewModel
             val uiState by browserViewModel.uiState.collectAsStateWithLifecycle()
 
             LaunchedEffect(uiState.sidebarConfig.hideStatusBarFullscreen, uiState.isCompactFullscreen) {
@@ -63,14 +71,80 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            LaunchedEffect(uiState.mediaPlaybackState.isPlaying, uiState.mediaPlaybackState.isActive, uiState.sidebarConfig.playInWindowPipEnabled) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val isPlaying = uiState.mediaPlaybackState.isPlaying || uiState.mediaPlaybackState.isActive
+                    val pipEnabled = uiState.sidebarConfig.playInWindowPipEnabled
+                    val params = PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .setAutoEnterEnabled(isPlaying && pipEnabled)
+                        .build()
+                    setPictureInPictureParams(params)
+                }
+            }
+
             ZenBrowserTheme(
                 accentTheme = uiState.activeAccentTheme
             ) {
                 ZenBrowserScreen(
                     uiState = uiState,
-                    viewModel = browserViewModel
+                    viewModel = browserViewModel,
+                    onEnterPip = { enterPipManual() }
                 )
             }
         }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        enterPipIfPlaying()
+    }
+
+    private fun enterPipIfPlaying(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val state = viewModelRef?.uiState?.value
+            val isPlaying = state?.mediaPlaybackState?.isPlaying == true || state?.mediaPlaybackState?.isActive == true
+            val pipEnabled = state?.sidebarConfig?.playInWindowPipEnabled ?: true
+            if (isPlaying && pipEnabled) {
+                viewModelRef?.setSidebarOpen(false)
+                viewModelRef?.setPictureInPictureMode(true)
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    val params = PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .apply {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                setAutoEnterEnabled(true)
+                            }
+                        }
+                        .build()
+                    enterPictureInPictureMode(params)
+                }, 50)
+                return true
+            }
+        }
+        return false
+    }
+
+    fun enterPipManual(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            viewModelRef?.setSidebarOpen(false)
+            viewModelRef?.setPictureInPictureMode(true)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            }, 50)
+            return true
+        }
+        return false
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        viewModelRef?.setPictureInPictureMode(isInPictureInPictureMode)
     }
 }
