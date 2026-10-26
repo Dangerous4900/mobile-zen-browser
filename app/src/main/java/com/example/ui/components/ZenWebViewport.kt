@@ -884,9 +884,9 @@ fun ZenWebPaneView(
                 loadsImagesAutomatically = true
                 mediaPlaybackRequiresUserGesture = false
                 javaScriptCanOpenWindowsAutomatically = false
-                allowFileAccess = true
+                allowFileAccess = false
                 allowContentAccess = true
-                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 useWideViewPort = true
                 loadWithOverviewMode = true
                 setSupportZoom(true)
@@ -917,6 +917,9 @@ fun ZenWebPaneView(
 
                     @JavascriptInterface
                     fun onInstallAmoExtension(amoUrl: String, addonTitle: String) {
+                        val host = try { android.net.Uri.parse(amoUrl).host?.lowercase() } catch (e: Exception) { null }
+                        val isAmo = host == "addons.mozilla.org" || host?.endsWith(".addons.mozilla.org") == true
+                        if (!isAmo) return
                         post {
                             onInstallExtensionFromAmo(amoUrl, addonTitle)
                         }
@@ -1545,9 +1548,8 @@ fun ZenWebPaneView(
                         override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
                             request ?: return
                             val allowed = request.resources.filter {
-                                it == android.webkit.PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID ||
-                                    it == android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE ||
-                                    it == android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE
+                                // DRM playback only. Camera/mic are denied until a per-site prompt exists.
+                                it == android.webkit.PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID
                             }
                             if (allowed.isNotEmpty()) {
                                 request.grant(allowed.toTypedArray())
@@ -2807,8 +2809,8 @@ fun ZenOfflinePageRenderer(
                     settings.apply {
                         javaScriptEnabled = true
                         domStorageEnabled = true
-                        allowFileAccess = true
-                        allowContentAccess = true
+                        allowFileAccess = false
+                        allowContentAccess = false
                         loadWithOverviewMode = true
                         useWideViewPort = true
                         builtInZoomControls = true
