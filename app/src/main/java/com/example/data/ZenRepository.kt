@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 
 private val Context.dataStore by preferencesDataStore(name = "zen_browser_settings")
 
@@ -27,7 +28,10 @@ class ZenRepository(
     val history: Flow<List<HistoryEntryEntity>> = zenDao.getAllHistory()
     val downloads: Flow<List<DownloadItemEntity>> = zenDao.getAllDownloads()
     val offlinePages: Flow<List<OfflinePageEntity>> = zenDao.getAllOfflinePages()
+    // Passwords are stored encrypted (Android Keystore AES-GCM) and decrypted only at this boundary.
     val passwords: Flow<List<PasswordEntity>> = zenDao.getAllPasswords()
+        .onStart { migratePlaintextPasswords() }
+        .map { list -> list.map { it.copy(password = ZenCrypto.decrypt(it.password)) } }
 
     private object Keys {
         val SIDEBAR_POSITION = stringPreferencesKey("sidebar_position")
@@ -1117,10 +1121,25 @@ class ZenRepository(
 
     // Password Manager operations
     suspend fun getPasswordsForDomain(domain: String) =
-        zenDao.getPasswordsForDomain(domain)
+        zenDao.getPasswordsForDomain(domain).map { it.copy(password = ZenCrypto.decrypt(it.password)) }
 
-    suspend fun insertPassword(password: PasswordEntity) =
-        zenDao.insertPassword(password)
+    suspend fun insertPassword(password: PasswordEntity) {
+        val encrypted = ZenCrypto.encrypt(password.password) ?: return
+        zenDao.insertPassword(password.copy(password = encrypted, updatedAt = System.currentTimeMillis()))
+    }
+
+    private var passwordMigrationDone = false
+
+    /** One-time: encrypts any legacy plaintext rows left over from earlier versions. */
+    private suspend fun migratePlaintextPasswords() {
+        if (passwordMigrationDone) return
+        passwordMigrationDone = true
+        zenDao.getAllPasswords().first()
+            .filter { !ZenCrypto.isEncrypted(it.password) && it.password.isNotEmpty() }
+            .forEach { row ->
+                ZenCrypto.encrypt(row.password)?.let { zenDao.insertPassword(row.copy(password = it)) }
+            }
+    }
 
     suspend fun deletePassword(id: String) =
         zenDao.deletePassword(id)

@@ -293,6 +293,7 @@ enum class SidebarSectionType(val id: String, val label: String) {
 data class MediaPlaybackState(
     val isActive: Boolean = false,
     val isPlaying: Boolean = false,
+    val isMuted: Boolean = false,
     val title: String = "",
     val domain: String = "",
     val tabId: String = ""

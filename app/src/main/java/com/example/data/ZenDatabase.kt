@@ -159,7 +159,7 @@ interface ZenDao {
     @Query("SELECT * FROM passwords ORDER BY domain ASC, username ASC")
     fun getAllPasswords(): Flow<List<PasswordEntity>>
 
-    @Query("SELECT * FROM passwords WHERE domain = :domain OR url LIKE '%' || :domain || '%'")
+    @Query("SELECT * FROM passwords WHERE lower(domain) = lower(:domain)")
     suspend fun getPasswordsForDomain(domain: String): List<PasswordEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

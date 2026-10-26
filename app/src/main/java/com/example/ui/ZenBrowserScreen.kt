@@ -169,6 +169,9 @@ fun ZenBrowserScreen(
         if (uiState.isInPictureInPictureMode) {
             viewModel.setSidebarOpen(false)
         }
+        // Make the playing video fill the small PiP window; restore the page on exit.
+        primaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
+        secondaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
     }
 
     var showExtensionsMenuPopup by remember { mutableStateOf(false) }
@@ -409,8 +412,10 @@ fun ZenBrowserScreen(
                         secondaryWebController.toggleMediaPlayPause()
                     },
                     onToggleMediaMute = {
-                        primaryWebController.toggleMediaMute()
-                        secondaryWebController.toggleMediaMute()
+                        val mute = !uiState.mediaPlaybackState.isMuted
+                        viewModel.setMediaMuted(mute)
+                        primaryWebController.setMediaMuted(mute)
+                        secondaryWebController.setMediaMuted(mute)
                     },
                     onDismissMediaBar = {
                         primaryWebController.stopAllMedia()
@@ -921,8 +926,10 @@ fun ZenBrowserScreen(
                         secondaryWebController.toggleMediaPlayPause()
                     },
                     onToggleMediaMute = {
-                        primaryWebController.toggleMediaMute()
-                        secondaryWebController.toggleMediaMute()
+                        val mute = !uiState.mediaPlaybackState.isMuted
+                        viewModel.setMediaMuted(mute)
+                        primaryWebController.setMediaMuted(mute)
+                        secondaryWebController.setMediaMuted(mute)
                     },
                     onDismissMediaBar = {
                         primaryWebController.stopAllMedia()
@@ -1030,8 +1037,10 @@ fun ZenBrowserScreen(
                         secondaryWebController.toggleMediaPlayPause()
                     },
                     onToggleMediaMute = {
-                        primaryWebController.toggleMediaMute()
-                        secondaryWebController.toggleMediaMute()
+                        val mute = !uiState.mediaPlaybackState.isMuted
+                        viewModel.setMediaMuted(mute)
+                        primaryWebController.setMediaMuted(mute)
+                        secondaryWebController.setMediaMuted(mute)
                     },
                     onDismissMediaBar = {
                         primaryWebController.stopAllMedia()

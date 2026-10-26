@@ -19,3 +19,11 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# WebView JS bridges must keep their @JavascriptInterface methods
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keepattributes JavascriptInterface
+# Room entities / DAOs are handled by Room's generated code; keep model classes for safety
+-keep class com.example.data.** { *; }
