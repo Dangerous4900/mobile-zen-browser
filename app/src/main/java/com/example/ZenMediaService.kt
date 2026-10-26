@@ -42,8 +42,8 @@ class ZenMediaService : Service() {
         createChannel()
         session = MediaSession(this, "ZenBrowserMedia").apply {
             setCallback(object : MediaSession.Callback() {
-                override fun onPlay() { ZenMediaBus.onPlayPause?.invoke() }
-                override fun onPause() { ZenMediaBus.onPlayPause?.invoke() }
+                override fun onPlay() { ZenMediaBus.onSetPlaying?.invoke(true) ?: ZenMediaBus.onPlayPause?.invoke() }
+                override fun onPause() { ZenMediaBus.onSetPlaying?.invoke(false) ?: ZenMediaBus.onPlayPause?.invoke() }
                 override fun onStop() { ZenMediaBus.onStop?.invoke() }
             })
             isActive = true
