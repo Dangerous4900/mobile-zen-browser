@@ -800,6 +800,8 @@ fun ZenWebPaneView(
     }
 
     val currentUiState by rememberUpdatedState(uiState)
+    // Pooled WebViews can outlive the composition that created their touch listener.
+    val currentOnOpenSidebar by rememberUpdatedState(onOpenSidebar)
     val currentPrivacyCfg by rememberUpdatedState(privacyCfg)
     val currentCustomCss by rememberUpdatedState(customCss)
     val currentCustomJs by rememberUpdatedState(customJs)
@@ -916,6 +918,20 @@ fun ZenWebPaneView(
                     if (currentUiState.isInPictureInPictureMode) {
                         return@setOnTouchListener false
                     }
+                    if (event.actionMasked == android.view.MotionEvent.ACTION_CANCEL) {
+                        // Android takes over this gesture for home/back/PiP. Abort it completely:
+                        // CANCEL must never finish an edge swipe or trigger pull-to-refresh.
+                        wv.postDelayed({ isUserInteractingWithScroll = false }, 350)
+                        isPullingDownToRefresh = false
+                        isPullingGestureActive = false
+                        startedAtTopOfPage = false
+                        hasTriggeredHorizontalSwipe = false
+                        touchStartX = 0f
+                        touchStartY = 0f
+                        pullEngageY = 0f
+                        if (!isPullRefreshing) pullDownDistancePx = 0f
+                        return@setOnTouchListener false
+                    }
                     val densityMetrics = ctx.resources.displayMetrics
                     val edgeThresholdPx = 28f * densityMetrics.density
                     val screenWidthPx = densityMetrics.widthPixels.toFloat()
@@ -994,7 +1010,7 @@ fun ZenWebPaneView(
                                     val swipeMode = currentUiState.sidebarConfig.horizontalSwipeMode
                                     if (swipeMode == com.example.data.HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
                                         if (finalDx < -60f && startedFromRightEdge) {
-                                            wv.post { onOpenSidebar() }
+                                            wv.post { currentOnOpenSidebar() }
                                             return@setOnTouchListener true
                                         } else if (finalDx > 60f && startedFromLeftEdge) {
                                             wv.post { controller.goBack() }
