@@ -68,13 +68,28 @@ class ZenMediaService : Service() {
                 override fun onPlay() { ZenMediaBus.onSetPlaying?.invoke(true) ?: ZenMediaBus.onPlayPause?.invoke() }
                 override fun onPause() { ZenMediaBus.onSetPlaying?.invoke(false) ?: ZenMediaBus.onPlayPause?.invoke() }
                 override fun onStop() { ZenMediaBus.onStop?.invoke() }
-                override fun onSeekTo(pos: Long) { ZenMediaBus.onSeekTo?.invoke(pos) }
-                override fun onRewind() { ZenMediaBus.onSeekBy?.invoke(-SKIP_MS) }
-                override fun onFastForward() { ZenMediaBus.onSeekBy?.invoke(SKIP_MS) }
+                override fun onSeekTo(pos: Long) {
+                    recordSeekPosition(pos)
+                    ZenMediaBus.onSeekTo?.invoke(pos)
+                }
+                override fun onRewind() {
+                    recordRelativeSeek(-SKIP_MS)
+                    ZenMediaBus.onSeekBy?.invoke(-SKIP_MS)
+                }
+                override fun onFastForward() {
+                    recordRelativeSeek(SKIP_MS)
+                    ZenMediaBus.onSeekBy?.invoke(SKIP_MS)
+                }
                 override fun onCustomAction(action: String, extras: android.os.Bundle?) {
                     when (action) {
-                        ACTION_REWIND -> ZenMediaBus.onSeekBy?.invoke(-SKIP_MS)
-                        ACTION_FORWARD -> ZenMediaBus.onSeekBy?.invoke(SKIP_MS)
+                        ACTION_REWIND -> {
+                            recordRelativeSeek(-SKIP_MS)
+                            ZenMediaBus.onSeekBy?.invoke(-SKIP_MS)
+                        }
+                        ACTION_FORWARD -> {
+                            recordRelativeSeek(SKIP_MS)
+                            ZenMediaBus.onSeekBy?.invoke(SKIP_MS)
+                        }
                     }
                 }
             })
@@ -101,8 +116,14 @@ class ZenMediaService : Service() {
             ACTION_PAUSE -> ZenMediaBus.onSetPlaying?.invoke(false) ?: ZenMediaBus.onPlayPause?.invoke()
             ACTION_PLAY_PAUSE -> ZenMediaBus.onPlayPause?.invoke()
             ACTION_STOP -> ZenMediaBus.onStop?.invoke()
-            ACTION_REWIND -> ZenMediaBus.onSeekBy?.invoke(-SKIP_MS)
-            ACTION_FORWARD -> ZenMediaBus.onSeekBy?.invoke(SKIP_MS)
+            ACTION_REWIND -> {
+                recordRelativeSeek(-SKIP_MS)
+                ZenMediaBus.onSeekBy?.invoke(-SKIP_MS)
+            }
+            ACTION_FORWARD -> {
+                recordRelativeSeek(SKIP_MS)
+                ZenMediaBus.onSeekBy?.invoke(SKIP_MS)
+            }
             ACTION_UPDATE -> update(
                 intent.getBooleanExtra(EXTRA_PLAYING, false),
                 intent.getStringExtra(EXTRA_TITLE).orEmpty(),
@@ -151,7 +172,11 @@ class ZenMediaService : Service() {
         if (durChanged) {
             publishMetadata()
         }
-        if (durChanged || positionMs < 0 || drift > 1500) {
+        // WebView reports progress on a 2-second timer, which can jitter or be throttled.
+        // Re-anchoring at 1.5s drift makes Android's interpolated notification seek bar visibly
+        // jump backwards/forwards every poll. Only re-anchor on meaningful drift; explicit seeks
+        // are applied immediately by recordSeekPosition/recordRelativeSeek below.
+        if (durChanged || positionMs < 0 || drift > 4000) {
             positionMs = posMs
             stateRealtime = SystemClock.elapsedRealtime()
             applyPlaybackState()
@@ -160,6 +185,26 @@ class ZenMediaService : Service() {
                 nm.notify(NOTIF_ID, buildNotification(lastTitle.orEmpty(), lastDomain.orEmpty(), playing))
             }
         }
+    }
+
+    /** Update MediaSession's timeline immediately when the user scrubs the notification. */
+    private fun recordSeekPosition(requestedMs: Long) {
+        val maxPosition = if (durationMs > 0) (durationMs - 1).coerceAtLeast(0L) else Long.MAX_VALUE
+        positionMs = requestedMs.coerceIn(0L, maxPosition)
+        stateRealtime = SystemClock.elapsedRealtime()
+        applyPlaybackState()
+    }
+
+    /** Keep the system seek bar aligned with explicit +/-10 second commands. */
+    private fun recordRelativeSeek(deltaMs: Long) {
+        val now = SystemClock.elapsedRealtime()
+        val current = if (lastPlaying == true && positionMs >= 0 && stateRealtime > 0) {
+            positionMs + (now - stateRealtime)
+        } else {
+            positionMs.coerceAtLeast(0L)
+        }
+        val target = (current + deltaMs).coerceAtLeast(0L)
+        recordSeekPosition(if (durationMs > 0) target.coerceAtMost((durationMs - 1).coerceAtLeast(0L)) else target)
     }
 
     private fun publishMetadata() {
