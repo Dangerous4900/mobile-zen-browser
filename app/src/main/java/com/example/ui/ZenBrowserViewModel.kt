@@ -1309,19 +1309,29 @@ class ZenBrowserViewModel(
         domain: String,
         tabId: String
     ) {
-        sessionState.update {
-            it.copy(
-                mediaPlaybackState = MediaPlaybackState(
-                    // Stay active while paused so the system notification keeps its Play button.
-                    isActive = isActive || (it.mediaPlaybackState.isActive && it.mediaPlaybackState.tabId == tabId),
-                    isPlaying = isPlaying,
-                    // Mute is user intent: keep it while the same tab keeps reporting media.
-                    isMuted = it.mediaPlaybackState.isMuted && it.mediaPlaybackState.tabId == tabId,
-                    title = title.ifBlank { domain },
-                    domain = domain,
-                    tabId = tabId
+        sessionState.update { current ->
+            val previous = current.mediaPlaybackState
+            // Every WebView polls independently. An idle tab must not steal ownership from the
+            // tab that is actually playing; otherwise the notification targets the wrong page
+            // whenever the sidebar, another tab, or the app lifecycle changes.
+            if (previous.isActive && previous.tabId.isNotBlank() &&
+                previous.tabId != tabId && !isPlaying
+            ) {
+                current
+            } else {
+                current.copy(
+                    mediaPlaybackState = MediaPlaybackState(
+                        // Presence of a media element (including a paused one) keeps controls alive.
+                        isActive = isActive,
+                        isPlaying = isPlaying,
+                        // Mute is user intent: retain it only for the same media owner.
+                        isMuted = previous.isMuted && previous.tabId == tabId,
+                        title = title.ifBlank { domain },
+                        domain = domain,
+                        tabId = tabId
+                    )
                 )
-            )
+            }
         }
     }
 
