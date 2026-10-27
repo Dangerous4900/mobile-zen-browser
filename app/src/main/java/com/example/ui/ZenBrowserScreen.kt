@@ -204,7 +204,8 @@ fun ZenBrowserScreen(
     // buttons cannot accidentally invert each other. Pages without media are left untouched.
     DisposableEffect(primaryWebController, secondaryWebController, uiState.mediaPlaybackState.isPlaying, uiState.mediaPlaybackState.tabId) {
         com.example.ZenMediaBus.onSetPlaying = { playing ->
-            val tabId = uiState.mediaPlaybackState.tabId
+            val media = uiState.mediaPlaybackState
+            val tabId = media.tabId
             val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
             if (wv != null) {
                 ZenWebViewController().apply { webView = wv }.setMediaPlaying(playing)
@@ -212,6 +213,15 @@ fun ZenBrowserScreen(
                 primaryWebController.setMediaPlaying(playing)
                 secondaryWebController.setMediaPlaying(playing)
             }
+            // Publish the requested state immediately; do not leave the controls stale until
+            // the page's next media poll runs.
+            viewModel.updateMediaPlaybackState(
+                isActive = true,
+                isPlaying = playing,
+                title = media.title,
+                domain = media.domain,
+                tabId = tabId
+            )
         }
         com.example.ZenMediaBus.onPlayPause = onToggleMediaPlayPause
         com.example.ZenMediaBus.onStop = onDismissMediaBar
@@ -1009,7 +1019,7 @@ fun ZenBrowserScreen(
         // the area beside and below it not occupied by the side panel remains completely normal (Color.Transparent)!
         if (!sidebarPinnedOpen && !uiState.isInPictureInPictureMode) {
             AnimatedVisibility(
-                visible = uiState.isSidebarOpen,
+                visible = uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
                 enter = fadeIn(spring(stiffness = Spring.StiffnessMediumLow)),
                 exit = fadeOut(spring(stiffness = Spring.StiffnessMediumLow))
             ) {
