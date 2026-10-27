@@ -33,6 +33,9 @@ class ZenMediaService : Service() {
 
     private var session: MediaSession? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var lastPlaying: Boolean? = null
+    private var lastTitle: String? = null
+    private var lastDomain: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -72,6 +75,11 @@ class ZenMediaService : Service() {
     }
 
     fun update(playing: Boolean, title: String, domain: String) {
+        if (lastPlaying == playing && lastTitle == title && lastDomain == domain) return
+        lastPlaying = playing
+        lastTitle = title
+        lastDomain = domain
+
         val s = session ?: return
         s.setMetadata(
             MediaMetadata.Builder()

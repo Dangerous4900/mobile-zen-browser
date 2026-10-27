@@ -340,10 +340,9 @@ class ZenWebViewController {
             """
             (function() {
                 window.__zenBypassPauseBlock = true;
-                var els = Array.prototype.slice.call(document.querySelectorAll('video, audio'));
-                if (els.length) {
-                    var candidates = els.filter(function(m) { return ${playing} || !m.ended; });
-                    candidates.forEach(function(m) {
+                function traverseFrames(doc) {
+                    var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
+                    els.forEach(function(m) {
                         if (${playing}) {
                             var p = m.play();
                             if (p && p.catch) p.catch(function() {});
@@ -351,14 +350,28 @@ class ZenWebViewController {
                             m.pause();
                         }
                     });
-                    window.__zenPausedByUs = ${playing} ? [] : candidates;
-                } else {
                     var selector = ${playing}
-                        ? '.ytp-play-button[aria-label*="Play"], button[aria-label="Play"], button[aria-label="Play (k)"]'
-                        : '.ytp-play-button[aria-label*="Pause"], button[aria-label="Pause"], button[aria-label="Pause (k)"]';
-                    var btn = document.querySelector(selector);
-                    if (btn) btn.click();
+                        ? '.ytp-play-button[aria-label*="Play" i], .ytp-large-play-button, button[aria-label*="Play" i], button[title*="Play" i]'
+                        : '.ytp-play-button[aria-label*="Pause" i], button[aria-label*="Pause" i], button[title*="Pause" i]';
+                    var btn = doc.querySelector(selector);
+                    if (btn) {
+                        btn.click();
+                    } else {
+                        var ytBtn = doc.querySelector('.ytp-play-button');
+                        if (ytBtn) ytBtn.click();
+                    }
+
+                    try {
+                        var frames = doc.querySelectorAll('iframe');
+                        for (var i = 0; i < frames.length; i++) {
+                            try {
+                                var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                if (frameDoc) traverseFrames(frameDoc);
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
                 }
+                traverseFrames(document);
                 setTimeout(function() { window.__zenBypassPauseBlock = false; }, 400);
             })();
             """.trimIndent(),
@@ -370,22 +383,47 @@ class ZenWebViewController {
         webView?.evaluateJavascript(
             """
             (function() {
-                var els = Array.prototype.slice.call(document.querySelectorAll('video, audio'));
-                var playing = els.some(function(m) { return !m.paused && !m.ended; });
-                if (els.length) {
-                    window.__zenBypassPauseBlock = true;
+                var playing = false;
+                function checkPlaying(doc) {
+                    var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
+                    if (els.some(function(m) { return !m.paused && !m.ended; })) playing = true;
+                    try {
+                        var frames = doc.querySelectorAll('iframe');
+                        for (var i = 0; i < frames.length; i++) {
+                            try {
+                                var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                if (frameDoc) checkPlaying(frameDoc);
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
+                }
+                checkPlaying(document);
+
+                window.__zenBypassPauseBlock = true;
+                function applyToggle(doc, isPlaying) {
+                    var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
                     els.forEach(function(m) {
-                        if (playing) m.pause();
+                        if (isPlaying) m.pause();
                         else if (!m.ended) { var p = m.play(); if (p && p.catch) p.catch(function() {}); }
                     });
-                    window.__zenPausedByUs = playing ? els : [];
-                    setTimeout(function() { window.__zenBypassPauseBlock = false; }, 400);
-                } else {
-                    var btn = document.querySelector(playing
+                    var selector = isPlaying
                         ? '.ytp-play-button[aria-label*="Pause"], button[aria-label="Pause"]'
-                        : '.ytp-play-button[aria-label*="Play"], button[aria-label="Play"]');
+                        : '.ytp-play-button[aria-label*="Play"], .ytp-large-play-button, button[aria-label="Play"]';
+                    var btn = doc.querySelector(selector);
                     if (btn) btn.click();
+
+                    try {
+                        var frames = doc.querySelectorAll('iframe');
+                        for (var i = 0; i < frames.length; i++) {
+                            try {
+                                var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                if (frameDoc) applyToggle(frameDoc, isPlaying);
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
                 }
+                applyToggle(document, playing);
+                setTimeout(function() { window.__zenBypassPauseBlock = false; }, 400);
             })();
             """.trimIndent(),
             null
@@ -395,7 +433,30 @@ class ZenWebViewController {
     /** Mutes/unmutes every media element and Web Audio context on the page (never clicks site buttons). */
     fun setMediaMuted(muted: Boolean) {
         isMuted = muted
-        webView?.evaluateJavascript("window.__zenApplyMute && window.__zenApplyMute($muted);", null)
+        webView?.evaluateJavascript(
+            """
+            (function() {
+                window.__zenApplyMute && window.__zenApplyMute($muted);
+                function applyMuteToDoc(doc) {
+                    doc.querySelectorAll('video, audio').forEach(function(m) {
+                        m.muted = $muted;
+                        m.volume = $muted ? 0 : 1;
+                    });
+                    try {
+                        var frames = doc.querySelectorAll('iframe');
+                        for (var i = 0; i < frames.length; i++) {
+                            try {
+                                var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                if (frameDoc) applyMuteToDoc(frameDoc);
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
+                }
+                applyMuteToDoc(document);
+            })();
+            """.trimIndent(),
+            null
+        )
     }
 
     /** Re-applies the remembered mute state after navigation (the page JS flag is lost on load). */
@@ -413,10 +474,27 @@ class ZenWebViewController {
                 if (old) old.remove();
                 document.querySelectorAll('[data-zen-pip]').forEach(function(e) { e.removeAttribute('data-zen-pip'); });
                 if (!$enabled) return;
-                var vids = Array.prototype.slice.call(document.querySelectorAll('video'));
-                var v = vids.filter(function(x) { return !x.paused; })[0] || vids.sort(function(a, b) { return b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight; })[0];
-                if (!v) return;
-                v.setAttribute('data-zen-pip', '1');
+
+                function findAndPip(doc) {
+                    var vids = Array.prototype.slice.call(doc.querySelectorAll('video'));
+                    var v = vids.filter(function(x) { return !x.paused; })[0] || vids.sort(function(a, b) { return b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight; })[0];
+                    if (v) {
+                        v.setAttribute('data-zen-pip', '1');
+                        return true;
+                    }
+                    try {
+                        var frames = doc.querySelectorAll('iframe');
+                        for (var i = 0; i < frames.length; i++) {
+                            try {
+                                var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                if (frameDoc && findAndPip(frameDoc)) return true;
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
+                    return false;
+                }
+                findAndPip(document);
+
                 var st = document.createElement('style');
                 st.id = id;
                 st.textContent = 'html,body{background:#000!important;overflow:hidden!important}' +
@@ -923,7 +1001,7 @@ fun ZenWebPaneView(
                     fun onMediaUpdate(isPlaying: Boolean, title: String, host: String) {
                         post {
                             onMediaStateChanged(
-                                isPlaying,
+                                true,
                                 isPlaying,
                                 title.ifBlank { tab.title },
                                 host.ifBlank { ZenPrivacyEngine.extractHostDisplay(tab.url) },
@@ -1097,8 +1175,8 @@ fun ZenWebPaneView(
             var oldFab = document.getElementById('__zen_translator_fab');
             if (oldFab) { oldFab.remove(); }
 
-            function enhanceVideos() {
-                document.querySelectorAll('video, audio').forEach(function(v) {
+            function enhanceDocVideos(doc) {
+                doc.querySelectorAll('video, audio').forEach(function(v) {
                     if (!v.hasAttribute('playsinline')) {
                         v.setAttribute('playsinline', '');
                     }
@@ -1106,6 +1184,18 @@ fun ZenWebPaneView(
                         v.setAttribute('webkit-playsinline', '');
                     }
                 });
+                try {
+                    var frames = doc.querySelectorAll('iframe');
+                    for (var i = 0; i < frames.length; i++) {
+                        try {
+                            var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                            if (frameDoc) enhanceDocVideos(frameDoc);
+                        } catch(e) {}
+                    }
+                } catch(e) {}
+            }
+            function enhanceVideos() {
+                enhanceDocVideos(document);
             }
             enhanceVideos();
 
@@ -1181,6 +1271,15 @@ fun ZenWebPaneView(
                     root.querySelectorAll('video, audio').forEach(function(m) {
                         if (m.muted !== window.__zenIsMuted) m.muted = window.__zenIsMuted;
                     });
+                    try {
+                        var frames = root.querySelectorAll('iframe');
+                        for (var i = 0; i < frames.length; i++) {
+                            try {
+                                var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                if (frameDoc) applyMuteToMedia(frameDoc);
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
                 }
                 window.__zenApplyMute = function(muted) {
                     window.__zenIsMuted = !!muted;
@@ -1199,16 +1298,30 @@ fun ZenWebPaneView(
                 });
 
                 function checkAndUpdateMediaState() {
-                    var allMedia = document.querySelectorAll('video, audio');
                     var isPlaying = false;
                     if (window.__zenIsMuted) applyMuteToMedia(document);
-                    allMedia.forEach(function(m) {
-                        if (!m.hasAttribute('playsinline')) m.setAttribute('playsinline', '');
-                        if (!m.hasAttribute('webkit-playsinline')) m.setAttribute('webkit-playsinline', '');
-                        if (!m.paused && m.currentTime > 0 && !m.ended) {
-                            isPlaying = true;
-                        }
-                    });
+
+                    function checkDoc(doc) {
+                        var allMedia = doc.querySelectorAll('video, audio');
+                        allMedia.forEach(function(m) {
+                            if (!m.hasAttribute('playsinline')) m.setAttribute('playsinline', '');
+                            if (!m.hasAttribute('webkit-playsinline')) m.setAttribute('webkit-playsinline', '');
+                            if (!m.paused && m.currentTime > 0 && !m.ended) {
+                                isPlaying = true;
+                            }
+                        });
+                        try {
+                            var frames = doc.querySelectorAll('iframe');
+                            for (var i = 0; i < frames.length; i++) {
+                                try {
+                                    var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                    if (frameDoc) checkDoc(frameDoc);
+                                } catch(e) {}
+                            }
+                        } catch(e) {}
+                    }
+                    checkDoc(document);
+
                     if (window.ZenMediaBridge) {
                         window.ZenMediaBridge.onMediaUpdate(isPlaying, document.title || '', location.hostname || '');
                     }
@@ -1309,6 +1422,8 @@ fun ZenWebPaneView(
                             // Whitelist essential site media streams, CDNs, fonts, and YouTube resources so video/page loading is smooth
                             val isEssentialSiteResource = lowerUrl.contains("googlevideo.com") ||
                                 lowerUrl.contains("ytimg.com") ||
+                                lowerUrl.contains("youtube.com") ||
+                                lowerUrl.contains("youtu.be") ||
                                 lowerUrl.contains("fonts.gstatic.com") ||
                                 lowerUrl.contains("fonts.googleapis.com") ||
                                 (lowerUrl.contains("youtube.com") &&

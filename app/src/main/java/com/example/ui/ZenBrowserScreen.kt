@@ -152,23 +152,58 @@ fun ZenBrowserScreen(
         primaryWebController
     }
 
-    // System media controls use explicit state commands so Android's Play and Pause
-    // buttons cannot accidentally invert each other. Pages without media are left untouched.
-    DisposableEffect(primaryWebController, secondaryWebController, uiState.mediaPlaybackState.isPlaying) {
-        com.example.ZenMediaBus.onSetPlaying = { playing ->
-            primaryWebController.setMediaPlaying(playing)
-            secondaryWebController.setMediaPlaying(playing)
-        }
-        com.example.ZenMediaBus.onPlayPause = {
-            val shouldPlay = !uiState.mediaPlaybackState.isPlaying
+    val onToggleMediaPlayPause: () -> Unit = {
+        val shouldPlay = !uiState.mediaPlaybackState.isPlaying
+        val tabId = uiState.mediaPlaybackState.tabId
+        val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
+        if (wv != null) {
+            ZenWebViewController().apply { webView = wv }.setMediaPlaying(shouldPlay)
+        } else {
             primaryWebController.setMediaPlaying(shouldPlay)
             secondaryWebController.setMediaPlaying(shouldPlay)
         }
-        com.example.ZenMediaBus.onStop = {
+    }
+
+    val onToggleMediaMute: () -> Unit = {
+        val mute = !uiState.mediaPlaybackState.isMuted
+        viewModel.setMediaMuted(mute)
+        val tabId = uiState.mediaPlaybackState.tabId
+        val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
+        if (wv != null) {
+            ZenWebViewController().apply { webView = wv }.setMediaMuted(mute)
+        } else {
+            primaryWebController.setMediaMuted(mute)
+            secondaryWebController.setMediaMuted(mute)
+        }
+    }
+
+    val onDismissMediaBar: () -> Unit = {
+        val tabId = uiState.mediaPlaybackState.tabId
+        val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
+        if (wv != null) {
+            ZenWebViewController().apply { webView = wv }.stopAllMedia()
+        } else {
             primaryWebController.stopAllMedia()
             secondaryWebController.stopAllMedia()
-            viewModel.dismissMediaPlaybackBar()
         }
+        viewModel.dismissMediaPlaybackBar()
+    }
+
+    // System media controls use explicit state commands so Android's Play and Pause
+    // buttons cannot accidentally invert each other. Pages without media are left untouched.
+    DisposableEffect(primaryWebController, secondaryWebController, uiState.mediaPlaybackState.isPlaying, uiState.mediaPlaybackState.tabId) {
+        com.example.ZenMediaBus.onSetPlaying = { playing ->
+            val tabId = uiState.mediaPlaybackState.tabId
+            val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
+            if (wv != null) {
+                ZenWebViewController().apply { webView = wv }.setMediaPlaying(playing)
+            } else {
+                primaryWebController.setMediaPlaying(playing)
+                secondaryWebController.setMediaPlaying(playing)
+            }
+        }
+        com.example.ZenMediaBus.onPlayPause = onToggleMediaPlayPause
+        com.example.ZenMediaBus.onStop = onDismissMediaBar
         onDispose {
             com.example.ZenMediaBus.onSetPlaying = null
             com.example.ZenMediaBus.onPlayPause = null
@@ -431,22 +466,9 @@ fun ZenBrowserScreen(
                     onToggleReaderMode = viewModel::toggleReaderMode,
                     onToggleCompactMode = viewModel::toggleCompactFullscreen,
                     onToggleDesktopMode = viewModel::toggleDesktopMode,
-                    onToggleMediaPlayPause = {
-                        val shouldPlay = !uiState.mediaPlaybackState.isPlaying
-                        primaryWebController.setMediaPlaying(shouldPlay)
-                        secondaryWebController.setMediaPlaying(shouldPlay)
-                    },
-                    onToggleMediaMute = {
-                        val mute = !uiState.mediaPlaybackState.isMuted
-                        viewModel.setMediaMuted(mute)
-                        primaryWebController.setMediaMuted(mute)
-                        secondaryWebController.setMediaMuted(mute)
-                    },
-                    onDismissMediaBar = {
-                        primaryWebController.stopAllMedia()
-                        secondaryWebController.stopAllMedia()
-                        viewModel.dismissMediaPlaybackBar()
-                    },
+                    onToggleMediaPlayPause = onToggleMediaPlayPause,
+                    onToggleMediaMute = onToggleMediaMute,
+                    onDismissMediaBar = onDismissMediaBar,
                     onEnterPip = onEnterPip,
                     onClearUnpinnedTabs = {
                         viewModel.clearBrowsingDataAndUnpinnedTabs {
@@ -946,22 +968,9 @@ fun ZenBrowserScreen(
                     onToggleReaderMode = viewModel::toggleReaderMode,
                     onToggleCompactMode = viewModel::toggleCompactFullscreen,
                     onToggleDesktopMode = viewModel::toggleDesktopMode,
-                    onToggleMediaPlayPause = {
-                        val shouldPlay = !uiState.mediaPlaybackState.isPlaying
-                        primaryWebController.setMediaPlaying(shouldPlay)
-                        secondaryWebController.setMediaPlaying(shouldPlay)
-                    },
-                    onToggleMediaMute = {
-                        val mute = !uiState.mediaPlaybackState.isMuted
-                        viewModel.setMediaMuted(mute)
-                        primaryWebController.setMediaMuted(mute)
-                        secondaryWebController.setMediaMuted(mute)
-                    },
-                    onDismissMediaBar = {
-                        primaryWebController.stopAllMedia()
-                        secondaryWebController.stopAllMedia()
-                        viewModel.dismissMediaPlaybackBar()
-                    },
+                    onToggleMediaPlayPause = onToggleMediaPlayPause,
+                    onToggleMediaMute = onToggleMediaMute,
+                    onDismissMediaBar = onDismissMediaBar,
                     onEnterPip = onEnterPip,
                     onClearUnpinnedTabs = {
                         viewModel.clearBrowsingDataAndUnpinnedTabs {
@@ -1058,22 +1067,9 @@ fun ZenBrowserScreen(
                     onToggleReaderMode = viewModel::toggleReaderMode,
                     onToggleCompactMode = viewModel::toggleCompactFullscreen,
                     onToggleDesktopMode = viewModel::toggleDesktopMode,
-                    onToggleMediaPlayPause = {
-                        val shouldPlay = !uiState.mediaPlaybackState.isPlaying
-                        primaryWebController.setMediaPlaying(shouldPlay)
-                        secondaryWebController.setMediaPlaying(shouldPlay)
-                    },
-                    onToggleMediaMute = {
-                        val mute = !uiState.mediaPlaybackState.isMuted
-                        viewModel.setMediaMuted(mute)
-                        primaryWebController.setMediaMuted(mute)
-                        secondaryWebController.setMediaMuted(mute)
-                    },
-                    onDismissMediaBar = {
-                        primaryWebController.stopAllMedia()
-                        secondaryWebController.stopAllMedia()
-                        viewModel.dismissMediaPlaybackBar()
-                    },
+                    onToggleMediaPlayPause = onToggleMediaPlayPause,
+                    onToggleMediaMute = onToggleMediaMute,
+                    onDismissMediaBar = onDismissMediaBar,
                     onEnterPip = onEnterPip,
                     onClearUnpinnedTabs = {
                         viewModel.clearBrowsingDataAndUnpinnedTabs {
