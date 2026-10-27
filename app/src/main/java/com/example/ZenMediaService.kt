@@ -109,7 +109,8 @@ class ZenMediaService : Service() {
                 intent.getStringExtra(EXTRA_DOMAIN).orEmpty()
             )
         }
-        return START_NOT_STICKY
+        // Keep the media playback service alive if Android reclaims the service.
+        return START_STICKY
     }
 
     fun update(playing: Boolean, title: String, domain: String) {
