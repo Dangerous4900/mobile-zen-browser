@@ -1021,7 +1021,7 @@ fun ZenWebPaneView(
                                             wv.post { controller.goBack() }
                                             return@setOnTouchListener true
                                         } else if (finalDx > 60f && startedFromLeftEdge) {
-                                            wv.post { onOpenSidebar() }
+                                            wv.post { currentOnOpenSidebar() }
                                             return@setOnTouchListener true
                                         }
                                     }
