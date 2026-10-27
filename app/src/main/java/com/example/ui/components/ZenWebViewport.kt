@@ -342,23 +342,27 @@ class ZenWebViewController {
                 window.__zenBypassPauseBlock = true;
                 function traverseFrames(doc) {
                     var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
-                    els.forEach(function(m) {
-                        if (${playing}) {
-                            var p = m.play();
-                            if (p && p.catch) p.catch(function() {});
-                        } else {
-                            m.pause();
-                        }
-                    });
-                    var selector = ${playing}
-                        ? '.ytp-play-button[aria-label*="Play" i], .ytp-large-play-button, button[aria-label*="Play" i], button[title*="Play" i]'
-                        : '.ytp-play-button[aria-label*="Pause" i], button[aria-label*="Pause" i], button[title*="Pause" i]';
-                    var btn = doc.querySelector(selector);
-                    if (btn) {
-                        btn.click();
+                    if (els.length) {
+                        // Native media and the site's own controls operate on the same player.
+                        // Calling both toggles some players twice, so Play immediately pauses again.
+                        els.forEach(function(m) {
+                            if (${playing}) {
+                                if (m.paused || m.ended) {
+                                    try { if (m.ended) m.currentTime = 0; } catch(e) {}
+                                    var p = m.play();
+                                    if (p && p.catch) p.catch(function() {});
+                                }
+                            } else if (!m.paused) {
+                                m.pause();
+                            }
+                        });
                     } else {
-                        var ytBtn = doc.querySelector('.ytp-play-button');
-                        if (ytBtn) ytBtn.click();
+                        // Fallback for players whose media element is not accessible in this frame.
+                        var selector = ${playing}
+                            ? '.ytp-play-button[aria-label*="Play" i], .ytp-large-play-button, button[aria-label*="Play" i], button[title*="Play" i]'
+                            : '.ytp-play-button[aria-label*="Pause" i], button[aria-label*="Pause" i], button[title*="Pause" i]';
+                        var btn = doc.querySelector(selector);
+                        if (btn) btn.click();
                     }
 
                     try {
@@ -402,15 +406,23 @@ class ZenWebViewController {
                 window.__zenBypassPauseBlock = true;
                 function applyToggle(doc, isPlaying) {
                     var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
-                    els.forEach(function(m) {
-                        if (isPlaying) m.pause();
-                        else if (!m.ended) { var p = m.play(); if (p && p.catch) p.catch(function() {}); }
-                    });
-                    var selector = isPlaying
-                        ? '.ytp-play-button[aria-label*="Pause"], button[aria-label="Pause"]'
-                        : '.ytp-play-button[aria-label*="Play"], .ytp-large-play-button, button[aria-label="Play"]';
-                    var btn = doc.querySelector(selector);
-                    if (btn) btn.click();
+                    if (els.length) {
+                        els.forEach(function(m) {
+                            if (isPlaying) {
+                                if (!m.paused && !m.ended) m.pause();
+                            } else if (m.paused || m.ended) {
+                                try { if (m.ended) m.currentTime = 0; } catch(e) {}
+                                var p = m.play();
+                                if (p && p.catch) p.catch(function() {});
+                            }
+                        });
+                    } else {
+                        var selector = isPlaying
+                            ? '.ytp-play-button[aria-label*="Pause" i], button[aria-label="Pause" i]'
+                            : '.ytp-play-button[aria-label*="Play" i], .ytp-large-play-button, button[aria-label="Play" i]';
+                        var btn = doc.querySelector(selector);
+                        if (btn) btn.click();
+                    }
 
                     try {
                         var frames = doc.querySelectorAll('iframe');
