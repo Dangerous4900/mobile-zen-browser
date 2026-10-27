@@ -1318,11 +1318,15 @@ class ZenBrowserViewModel(
                 previous.tabId != tabId && !isPlaying
             ) {
                 current
+            } else if (!isActive && previous.isActive && previous.tabId == tabId) {
+                // Background WebViews and cross-origin embeds can temporarily hide media elements
+                // from the injected poll. Do not let a missing DOM snapshot kill the session.
+                current
             } else {
                 current.copy(
                     mediaPlaybackState = MediaPlaybackState(
-                        // Presence of a media element (including a paused one) keeps controls alive.
-                        isActive = isActive,
+                        // Keep controls alive for paused media until dismissed or the tab is closed.
+                        isActive = isActive || (previous.isActive && previous.tabId == tabId),
                         isPlaying = isPlaying,
                         // Mute is user intent: retain it only for the same media owner.
                         isMuted = previous.isMuted && previous.tabId == tabId,
