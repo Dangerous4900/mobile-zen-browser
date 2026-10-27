@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity() {
         // Keep page JS timers + audio running when the screen turns off / app is backgrounded.
         val media = viewModelRef?.uiState?.value?.mediaPlaybackState
         if (media?.isActive == true && viewModelRef?.uiState?.value?.sidebarConfig?.backgroundPlayEnabled != false) {
-            com.example.ui.components.ZenWebViewManager.getAllWebViews().values.firstOrNull()?.resumeTimers()
+            com.example.ui.components.ZenWebViewManager.getAllWebViews().values.forEach { it.resumeTimers() }
         }
     }
 
