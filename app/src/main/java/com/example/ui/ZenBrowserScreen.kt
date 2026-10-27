@@ -189,6 +189,17 @@ fun ZenBrowserScreen(
         viewModel.dismissMediaPlaybackBar()
     }
 
+    val withMediaController: ((ZenWebViewController) -> Unit) -> Unit = { block ->
+        val tabId = uiState.mediaPlaybackState.tabId
+        val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
+        if (wv != null) {
+            block(ZenWebViewController().apply { webView = wv })
+        } else {
+            block(primaryWebController)
+            block(secondaryWebController)
+        }
+    }
+
     // System media controls use explicit state commands so Android's Play and Pause
     // buttons cannot accidentally invert each other. Pages without media are left untouched.
     DisposableEffect(primaryWebController, secondaryWebController, uiState.mediaPlaybackState.isPlaying, uiState.mediaPlaybackState.tabId) {
@@ -204,7 +215,11 @@ fun ZenBrowserScreen(
         }
         com.example.ZenMediaBus.onPlayPause = onToggleMediaPlayPause
         com.example.ZenMediaBus.onStop = onDismissMediaBar
+        com.example.ZenMediaBus.onSeekTo = { ms -> withMediaController { it.seekMediaTo(ms) } }
+        com.example.ZenMediaBus.onSeekBy = { ms -> withMediaController { it.seekMediaBy(ms) } }
         onDispose {
+            com.example.ZenMediaBus.onSeekTo = null
+            com.example.ZenMediaBus.onSeekBy = null
             com.example.ZenMediaBus.onSetPlaying = null
             com.example.ZenMediaBus.onPlayPause = null
             com.example.ZenMediaBus.onStop = null

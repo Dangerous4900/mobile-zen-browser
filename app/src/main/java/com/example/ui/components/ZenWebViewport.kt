@@ -430,6 +430,43 @@ class ZenWebViewController {
         )
     }
 
+    /** Seeks the page's main media element to an absolute position in milliseconds. */
+    fun seekMediaTo(positionMs: Long) = runSeek("t = $positionMs / 1000;")
+
+    /** Seeks the page's main media element by a relative offset in milliseconds. */
+    fun seekMediaBy(deltaMs: Long) = runSeek("t = (m.currentTime || 0) + ($deltaMs / 1000);")
+
+    private fun runSeek(computeTarget: String) {
+        webView?.evaluateJavascript(
+            """
+            (function() {
+                function collect(doc, out) {
+                    doc.querySelectorAll('video, audio').forEach(function(m) { out.push(m); });
+                    try {
+                        var frames = doc.querySelectorAll('iframe');
+                        for (var i = 0; i < frames.length; i++) {
+                            try {
+                                var fd = frames[i].contentDocument || frames[i].contentWindow.document;
+                                if (fd) collect(fd, out);
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
+                }
+                var all = [];
+                collect(document, all);
+                var seekable = all.filter(function(m) { return isFinite(m.duration) && m.duration > 0; });
+                var m = seekable.filter(function(x) { return !x.paused; })[0] || seekable[0];
+                if (!m) return;
+                var t;
+                $computeTarget
+                t = Math.max(0, Math.min(t, m.duration - 0.25));
+                try { m.currentTime = t; } catch(e) {}
+            })();
+            """.trimIndent(),
+            null
+        )
+    }
+
     /** Mutes/unmutes every media element and Web Audio context on the page (never clicks site buttons). */
     fun setMediaMuted(muted: Boolean) {
         isMuted = muted
@@ -814,6 +851,11 @@ fun ZenWebPaneView(
             var hasTriggeredHorizontalSwipe = false
 
             ZenBackgroundWebView(ctx).apply {
+                // Without this Android demotes the renderer when the app is backgrounded/screen-off,
+                // which silences or kills page audio after a while.
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+                }
                 isBackgroundPlayAllowed = { currentUiState.sidebarConfig.backgroundPlayEnabled }
                 isLongClickable = true
                 setOnLongClickListener { wv ->
@@ -1008,6 +1050,14 @@ fun ZenWebPaneView(
                                 tab.id
                             )
                         }
+                    }
+
+                    @JavascriptInterface
+                    fun onMediaProgress(positionMs: Long, durationMs: Long) {
+                        // Only the tab that owns the media bar may drive the system seek bar.
+                        val owner = currentUiState.mediaPlaybackState.tabId
+                        if (owner.isNotBlank() && owner != tab.id) return
+                        com.example.ZenMediaService.progress(positionMs, durationMs)
                     }
 
                     @JavascriptInterface
@@ -1301,9 +1351,13 @@ fun ZenWebPaneView(
                     var isPlaying = false;
                     if (window.__zenIsMuted) applyMuteToMedia(document);
 
+                    var progressMedia = null;
                     function checkDoc(doc) {
                         var allMedia = doc.querySelectorAll('video, audio');
                         allMedia.forEach(function(m) {
+                            if (isFinite(m.duration) && m.duration > 0 && (!progressMedia || (progressMedia.paused && !m.paused))) {
+                                progressMedia = m;
+                            }
                             if (!m.hasAttribute('playsinline')) m.setAttribute('playsinline', '');
                             if (!m.hasAttribute('webkit-playsinline')) m.setAttribute('webkit-playsinline', '');
                             if (!m.paused && m.currentTime > 0 && !m.ended) {
@@ -1324,6 +1378,12 @@ fun ZenWebPaneView(
 
                     if (window.ZenMediaBridge) {
                         window.ZenMediaBridge.onMediaUpdate(isPlaying, document.title || '', location.hostname || '');
+                        if (window.ZenMediaBridge.onMediaProgress) {
+                            window.ZenMediaBridge.onMediaProgress(
+                                progressMedia ? Math.round(progressMedia.currentTime * 1000) : 0,
+                                progressMedia ? Math.round(progressMedia.duration * 1000) : 0
+                            );
+                        }
                     }
                 }
 
