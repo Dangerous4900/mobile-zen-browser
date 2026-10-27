@@ -200,14 +200,26 @@ class MainActivity : ComponentActivity() {
 
     private fun enterPipNow(): Boolean {
         if (!canUsePip() || isInPictureInPictureMode) return false
-        viewModelRef?.setSidebarOpen(false)
-        window.decorView.postDelayed({
+        val browserViewModel = viewModelRef ?: return false
+
+        // Switch the Compose UI to its PiP-only layout before requesting the system
+        // transition. Closing the sidebar alone is not enough: its exit animation can
+        // still be visible while Android snapshots/resizes the activity into PiP.
+        browserViewModel.setSidebarOpen(false)
+        browserViewModel.setPictureInPictureMode(true)
+
+        window.decorView.post {
             if (!isInPictureInPictureMode) {
                 try {
-                    enterPictureInPictureMode(buildPipParams(autoEnter = false))
-                } catch (_: Exception) {}
+                    val entered = enterPictureInPictureMode(buildPipParams(autoEnter = false))
+                    if (!entered && !isInPictureInPictureMode) {
+                        browserViewModel.setPictureInPictureMode(false)
+                    }
+                } catch (_: Exception) {
+                    browserViewModel.setPictureInPictureMode(false)
+                }
             }
-        }, 100)
+        }
         return true
     }
 
