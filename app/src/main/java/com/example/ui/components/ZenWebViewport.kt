@@ -1040,10 +1040,10 @@ fun ZenWebPaneView(
             addJavascriptInterface(
                 object {
                     @JavascriptInterface
-                    fun onMediaUpdate(isPlaying: Boolean, title: String, host: String) {
+                    fun onMediaUpdate(hasMedia: Boolean, isPlaying: Boolean, title: String, host: String) {
                         post {
                             onMediaStateChanged(
-                                true,
+                                hasMedia,
                                 isPlaying,
                                 title.ifBlank { tab.title },
                                 host.ifBlank { ZenPrivacyEngine.extractHostDisplay(tab.url) },
@@ -1349,11 +1349,13 @@ fun ZenWebPaneView(
 
                 function checkAndUpdateMediaState() {
                     var isPlaying = false;
+                    var hasMedia = false;
                     if (window.__zenIsMuted) applyMuteToMedia(document);
 
                     var progressMedia = null;
                     function checkDoc(doc) {
                         var allMedia = doc.querySelectorAll('video, audio');
+                        if (allMedia.length > 0) hasMedia = true;
                         allMedia.forEach(function(m) {
                             if (isFinite(m.duration) && m.duration > 0 && (!progressMedia || (progressMedia.paused && !m.paused))) {
                                 progressMedia = m;
@@ -1377,7 +1379,7 @@ fun ZenWebPaneView(
                     checkDoc(document);
 
                     if (window.ZenMediaBridge) {
-                        window.ZenMediaBridge.onMediaUpdate(isPlaying, document.title || '', location.hostname || '');
+                        window.ZenMediaBridge.onMediaUpdate(hasMedia, isPlaying, document.title || '', location.hostname || '');
                         if (window.ZenMediaBridge.onMediaProgress) {
                             window.ZenMediaBridge.onMediaProgress(
                                 progressMedia ? Math.round(progressMedia.currentTime * 1000) : 0,
