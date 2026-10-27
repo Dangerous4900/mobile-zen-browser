@@ -986,7 +986,10 @@ fun ZenWebPaneView(
                                 val startedFromLeftEdge = touchStartX <= edgeThresholdPx
                                 val startedFromRightEdge = touchStartX >= (screenWidthPx - edgeThresholdPx)
 
-                                if ((startedFromLeftEdge || startedFromRightEdge) && absFinalDx > 60f && absFinalDx > absFinalDy * 1.35f) {
+                                // ACTION_CANCEL means the system took the gesture (home / PiP / back swipe).
+                                // Treating it as a finished edge swipe opened the side panel while entering PiP.
+                                val wasCancelled = event.actionMasked == android.view.MotionEvent.ACTION_CANCEL
+                                if (!wasCancelled && (startedFromLeftEdge || startedFromRightEdge) && absFinalDx > 60f && absFinalDx > absFinalDy * 1.35f) {
                                     hasTriggeredHorizontalSwipe = true
                                     val swipeMode = currentUiState.sidebarConfig.horizontalSwipeMode
                                     if (swipeMode == com.example.data.HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
