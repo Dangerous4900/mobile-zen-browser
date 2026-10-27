@@ -170,6 +170,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        viewModelRef?.onLeavingApp()
         // Route every Android version through the same explicit transition. This gives Compose
         // time to remove all sidebar layers before Android captures the PiP activity surface.
         enterPipIfPlaying()

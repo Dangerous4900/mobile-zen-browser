@@ -512,11 +512,20 @@ class ZenBrowserViewModel(
 
     fun toggleSidebar() {
         if (sessionState.value.isInPictureInPictureMode) return
+        if (!sessionState.value.isSidebarOpen && System.currentTimeMillis() < suppressSidebarOpenUntil) return
         sessionState.update { it.copy(isSidebarOpen = !it.isSidebarOpen) }
     }
 
+    private var suppressSidebarOpenUntil = 0L
+
+    /** Called when the user starts leaving the app (home/PiP gesture): stray gesture events must not open the panel. */
+    fun onLeavingApp() {
+        suppressSidebarOpenUntil = System.currentTimeMillis() + 1500L
+        sessionState.update { it.copy(isSidebarOpen = false) }
+    }
+
     fun setSidebarOpen(open: Boolean) {
-        if (open && sessionState.value.isInPictureInPictureMode) return
+        if (open && (sessionState.value.isInPictureInPictureMode || System.currentTimeMillis() < suppressSidebarOpenUntil)) return
         sessionState.update {
             it.copy(
                 isSidebarOpen = open,
