@@ -313,7 +313,11 @@ fun ZenBrowserScreen(
     }
 
     if (uiState.isInPictureInPictureMode) {
-        val activeTab = uiState.focusedTab ?: uiState.activePrimaryTab
+        // PiP must render the media-owning tab, not blindly the focused tab. This matters
+        // when playback started in a sidebar/split tab and the sidebar is hidden for PiP.
+        val activeTab = uiState.allTabs.firstOrNull { it.id == uiState.mediaPlaybackState.tabId }
+            ?: uiState.focusedTab
+            ?: uiState.activePrimaryTab
         if (activeTab != null) {
             ZenWebPaneView(
                 tab = activeTab,
