@@ -162,6 +162,13 @@ fun ZenBrowserScreen(
             primaryWebController.setMediaPlaying(shouldPlay)
             secondaryWebController.setMediaPlaying(shouldPlay)
         }
+        viewModel.updateMediaPlaybackState(
+            isActive = true,
+            isPlaying = shouldPlay,
+            title = uiState.mediaPlaybackState.title,
+            domain = uiState.mediaPlaybackState.domain,
+            tabId = tabId
+        )
     }
 
     val onToggleMediaMute: () -> Unit = {
@@ -1038,7 +1045,7 @@ fun ZenBrowserScreen(
 
             val isRight = sidebarCfg.position == SidebarPosition.RIGHT
             AnimatedVisibility(
-                visible = uiState.isSidebarOpen,
+                visible = uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
                 enter = slideInHorizontally(
                     animationSpec = spring(
                         dampingRatio = Spring.DampingRatioNoBouncy,
