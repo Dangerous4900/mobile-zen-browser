@@ -110,8 +110,9 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(uiState.mediaPlaybackState.isPlaying, uiState.sidebarConfig.playInWindowPipEnabled) {
                 if (canUsePip()) {
-                    val auto = uiState.mediaPlaybackState.isPlaying && uiState.sidebarConfig.playInWindowPipEnabled
-                    setPictureInPictureParams(buildPipParams(autoEnter = auto))
+                    // Use our explicit pre-transition path instead of Android 12+ auto-enter.
+                    // Auto-enter transitions before Compose can reliably remove the sidebar.
+                    setPictureInPictureParams(buildPipParams(autoEnter = false))
                 }
             }
 
@@ -169,7 +170,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) enterPipIfPlaying()
+        // Route every Android version through the same explicit transition. This gives Compose
+        // time to remove all sidebar layers before Android captures the PiP activity surface.
+        enterPipIfPlaying()
     }
 
     private fun canUsePip(): Boolean =
@@ -208,7 +211,9 @@ class MainActivity : ComponentActivity() {
         browserViewModel.setSidebarOpen(false)
         browserViewModel.setPictureInPictureMode(true)
 
-        window.decorView.post {
+        // Wait for at least one UI frame after the state update. A plain post() can run before
+        // Compose has recomposed, leaving the sidebar in Android's PiP transition snapshot.
+        window.decorView.postDelayed({
             if (!isInPictureInPictureMode) {
                 try {
                     val entered = enterPictureInPictureMode(buildPipParams(autoEnter = false))
@@ -219,7 +224,7 @@ class MainActivity : ComponentActivity() {
                     browserViewModel.setPictureInPictureMode(false)
                 }
             }
-        }
+        }, 180)
         return true
     }
 
