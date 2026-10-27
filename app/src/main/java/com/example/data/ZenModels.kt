@@ -302,7 +302,7 @@ data class MediaPlaybackState(
 data class SidebarConfig(
     val position: SidebarPosition = SidebarPosition.LEFT,
     val widthMode: SidebarWidthMode = SidebarWidthMode.BALANCED,
-    val urlBarPosition: UrlBarPosition = UrlBarPosition.BOTTOM,
+    val urlBarPosition: UrlBarPosition = UrlBarPosition.SIDEBAR_ONLY,
     val singleToolbarNewTabBehavior: SingleToolbarNewTabBehavior = SingleToolbarNewTabBehavior.CENTER_TOP_POPUP,
     val hideStatusBarFullscreen: Boolean = false,
     val hasCompletedTutorial: Boolean = false,

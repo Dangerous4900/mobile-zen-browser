@@ -340,29 +340,53 @@ class ZenWebViewController {
             """
             (function() {
                 window.__zenBypassPauseBlock = true;
-                function traverseFrames(doc) {
-                    var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
-                    if (els.length) {
-                        // Native media and the site's own controls operate on the same player.
-                        // Calling both toggles some players twice, so Play immediately pauses again.
-                        els.forEach(function(m) {
-                            if (${playing}) {
-                                if (m.paused || m.ended) {
-                                    try { if (m.ended) m.currentTime = 0; } catch(e) {}
-                                    var p = m.play();
-                                    if (p && p.catch) p.catch(function() {});
-                                }
-                            } else if (!m.paused) {
-                                m.pause();
+                function controlDoc(doc) {
+                    var ytp = doc.getElementById('movie_player') || doc.querySelector('.html5-video-player');
+                    var ytpHandled = false;
+                    if (ytp) {
+                        try {
+                            if (${playing} && typeof ytp.playVideo === 'function') {
+                                ytp.playVideo();
+                                ytpHandled = true;
+                            } else if (!${playing} && typeof ytp.pauseVideo === 'function') {
+                                ytp.pauseVideo();
+                                ytpHandled = true;
                             }
-                        });
-                    } else {
-                        // Fallback for players whose media element is not accessible in this frame.
-                        var selector = ${playing}
-                            ? '.ytp-play-button[aria-label*="Play" i], .ytp-large-play-button, button[aria-label*="Play" i], button[title*="Play" i]'
-                            : '.ytp-play-button[aria-label*="Pause" i], button[aria-label*="Pause" i], button[title*="Pause" i]';
-                        var btn = doc.querySelector(selector);
-                        if (btn) btn.click();
+                        } catch(e) {}
+                    }
+
+                    var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
+                    els.forEach(function(m) {
+                        if (${playing}) {
+                            if (m.paused || m.ended) {
+                                try { if (m.ended) m.currentTime = 0; } catch(e) {}
+                                var p = m.play();
+                                if (p && p.catch) p.catch(function() {});
+                            }
+                        } else if (!m.paused) {
+                            m.pause();
+                        }
+                    });
+
+                    if (!ytpHandled) {
+                        if (${playing}) {
+                            var anyStillPaused = els.length === 0 || els.some(function(m) { return m.paused; });
+                            if (anyStillPaused) {
+                                var playBtn = doc.querySelector('.ytp-play-button, .ytp-large-play-button, button[aria-label*="Play" i], button[title*="Play" i], [aria-label*="Play" i]');
+                                if (playBtn) {
+                                    var lbl = (playBtn.getAttribute('aria-label') || playBtn.title || '').toLowerCase();
+                                    if (lbl.indexOf('pause') === -1) {
+                                        playBtn.click();
+                                    }
+                                }
+                            }
+                        } else {
+                            var anyStillPlaying = els.length === 0 || els.some(function(m) { return !m.paused; });
+                            if (anyStillPlaying) {
+                                var pauseBtn = doc.querySelector('.ytp-play-button[aria-label*="Pause" i], button[aria-label*="Pause" i], button[title*="Pause" i]');
+                                if (pauseBtn) pauseBtn.click();
+                            }
+                        }
                     }
 
                     try {
@@ -370,12 +394,12 @@ class ZenWebViewController {
                         for (var i = 0; i < frames.length; i++) {
                             try {
                                 var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
-                                if (frameDoc) traverseFrames(frameDoc);
+                                if (frameDoc) controlDoc(frameDoc);
                             } catch(e) {}
                         }
                     } catch(e) {}
                 }
-                traverseFrames(document);
+                controlDoc(document);
                 setTimeout(function() { window.__zenBypassPauseBlock = false; }, 400);
             })();
             """.trimIndent(),
@@ -389,6 +413,10 @@ class ZenWebViewController {
             (function() {
                 var playing = false;
                 function checkPlaying(doc) {
+                    var ytp = doc.getElementById('movie_player') || doc.querySelector('.html5-video-player');
+                    if (ytp && typeof ytp.getPlayerState === 'function') {
+                        if (ytp.getPlayerState() === 1) playing = true;
+                    }
                     var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
                     if (els.some(function(m) { return !m.paused && !m.ended; })) playing = true;
                     try {
@@ -405,21 +433,35 @@ class ZenWebViewController {
 
                 window.__zenBypassPauseBlock = true;
                 function applyToggle(doc, isPlaying) {
-                    var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
-                    if (els.length) {
-                        els.forEach(function(m) {
-                            if (isPlaying) {
-                                if (!m.paused && !m.ended) m.pause();
-                            } else if (m.paused || m.ended) {
-                                try { if (m.ended) m.currentTime = 0; } catch(e) {}
-                                var p = m.play();
-                                if (p && p.catch) p.catch(function() {});
+                    var ytp = doc.getElementById('movie_player') || doc.querySelector('.html5-video-player');
+                    var ytpHandled = false;
+                    if (ytp) {
+                        try {
+                            if (isPlaying && typeof ytp.pauseVideo === 'function') {
+                                ytp.pauseVideo();
+                                ytpHandled = true;
+                            } else if (!isPlaying && typeof ytp.playVideo === 'function') {
+                                ytp.playVideo();
+                                ytpHandled = true;
                             }
-                        });
-                    } else {
+                        } catch(e) {}
+                    }
+
+                    var els = Array.prototype.slice.call(doc.querySelectorAll('video, audio'));
+                    els.forEach(function(m) {
+                        if (isPlaying) {
+                            if (!m.paused && !m.ended) m.pause();
+                        } else if (m.paused || m.ended) {
+                            try { if (m.ended) m.currentTime = 0; } catch(e) {}
+                            var p = m.play();
+                            if (p && p.catch) p.catch(function() {});
+                        }
+                    });
+
+                    if (!ytpHandled) {
                         var selector = isPlaying
-                            ? '.ytp-play-button[aria-label*="Pause" i], button[aria-label="Pause" i]'
-                            : '.ytp-play-button[aria-label*="Play" i], .ytp-large-play-button, button[aria-label="Play" i]';
+                            ? '.ytp-play-button[aria-label*="Pause" i], button[aria-label*="Pause" i], button[title*="Pause" i]'
+                            : '.ytp-play-button, .ytp-large-play-button, button[aria-label*="Play" i], button[title*="Play" i]';
                         var btn = doc.querySelector(selector);
                         if (btn) btn.click();
                     }
@@ -453,6 +495,8 @@ class ZenWebViewController {
             """
             (function() {
                 function collect(doc, out) {
+                    var ytp = doc.getElementById('movie_player') || doc.querySelector('.html5-video-player');
+                    if (ytp && !out.__ytp) out.__ytp = ytp;
                     doc.querySelectorAll('video, audio').forEach(function(m) { out.push(m); });
                     try {
                         var frames = doc.querySelectorAll('iframe');
@@ -468,11 +512,19 @@ class ZenWebViewController {
                 collect(document, all);
                 var seekable = all.filter(function(m) { return isFinite(m.duration) && m.duration > 0; });
                 var m = seekable.filter(function(x) { return !x.paused; })[0] || seekable[0];
-                if (!m) return;
-                var t;
+                if (!m && !all.__ytp) return;
+                var dur = (m && isFinite(m.duration) && m.duration > 0) ? m.duration : (all.__ytp && typeof all.__ytp.getDuration === 'function' ? all.__ytp.getDuration() : 3600);
+                var t = 0;
+                if (!m) m = { currentTime: (all.__ytp && typeof all.__ytp.getCurrentTime === 'function' ? all.__ytp.getCurrentTime() : 0), duration: dur };
                 $computeTarget
-                t = Math.max(0, Math.min(t, m.duration - 0.25));
-                try { m.currentTime = t; } catch(e) {}
+                t = Math.max(0, Math.min(t, dur - 0.25));
+                window.__zenLastSeekTime = Date.now();
+                window.__zenSeekTargetSec = t;
+                if (all.__ytp && typeof all.__ytp.seekTo === 'function') {
+                    try { all.__ytp.seekTo(t, true); } catch(e) {}
+                } else if (m && 'currentTime' in m) {
+                    try { m.currentTime = t; } catch(e) {}
+                }
             })();
             """.trimIndent(),
             null
@@ -485,11 +537,29 @@ class ZenWebViewController {
         webView?.evaluateJavascript(
             """
             (function() {
-                window.__zenApplyMute && window.__zenApplyMute($muted);
+                window.__zenIsMuted = $muted;
+                if (typeof window.__zenApplyMute === 'function') {
+                    try { window.__zenApplyMute($muted); } catch(e) {}
+                }
                 function applyMuteToDoc(doc) {
+                    try {
+                        var ytp = (doc.getElementById && doc.getElementById('movie_player')) || doc.querySelector('.html5-video-player');
+                        if (ytp) {
+                            if ($muted && typeof ytp.mute === 'function') ytp.mute();
+                            else if (!$muted && typeof ytp.unMute === 'function') ytp.unMute();
+                        }
+                    } catch(e) {}
                     doc.querySelectorAll('video, audio').forEach(function(m) {
-                        m.muted = $muted;
-                        m.volume = $muted ? 0 : 1;
+                        try {
+                            m.muted = $muted;
+                            m.defaultMuted = $muted;
+                            if ($muted) {
+                                if (m.volume > 0) m.__zenSavedVol = m.volume;
+                                m.volume = 0;
+                            } else {
+                                m.volume = (m.__zenSavedVol !== undefined && m.__zenSavedVol > 0) ? m.__zenSavedVol : 1;
+                            }
+                        } catch(e) {}
                     });
                     try {
                         var frames = doc.querySelectorAll('iframe');
@@ -547,8 +617,9 @@ class ZenWebViewController {
                 var st = document.createElement('style');
                 st.id = id;
                 st.textContent = 'html,body{background:#000!important;overflow:hidden!important}' +
-                    'video[data-zen-pip]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
-                    'max-width:none!important;max-height:none!important;object-fit:contain!important;z-index:2147483647!important;background:#000!important}';
+                    'video[data-zen-pip],.html5-main-video[data-zen-pip]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+                    'max-width:none!important;max-height:none!important;object-fit:contain!important;z-index:2147483647!important;background:#000!important}' +
+                    '.html5-video-player{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:2147483646!important;max-width:none!important;max-height:none!important}';
                 document.documentElement.appendChild(st);
             })();
             """.trimIndent(),
@@ -1349,8 +1420,24 @@ fun ZenWebPaneView(
                     });
                 } catch(e) {}
                 function applyMuteToMedia(root) {
+                    try {
+                        var ytp = (root.getElementById && root.getElementById('movie_player')) || root.querySelector('.html5-video-player');
+                        if (ytp) {
+                            if (window.__zenIsMuted && typeof ytp.mute === 'function') ytp.mute();
+                            else if (!window.__zenIsMuted && typeof ytp.unMute === 'function') ytp.unMute();
+                        }
+                    } catch(e) {}
                     root.querySelectorAll('video, audio').forEach(function(m) {
-                        if (m.muted !== window.__zenIsMuted) m.muted = window.__zenIsMuted;
+                        try {
+                            if (m.muted !== window.__zenIsMuted) m.muted = window.__zenIsMuted;
+                            m.defaultMuted = window.__zenIsMuted;
+                            if (window.__zenIsMuted) {
+                                if (m.volume > 0) m.__zenSavedVol = m.volume;
+                                m.volume = 0;
+                            } else if (m.__zenSavedVol !== undefined) {
+                                m.volume = m.__zenSavedVol > 0 ? m.__zenSavedVol : 1;
+                            }
+                        } catch(e) {}
                     });
                     try {
                         var frames = root.querySelectorAll('iframe');
@@ -1365,15 +1452,21 @@ fun ZenWebPaneView(
                 window.__zenApplyMute = function(muted) {
                     window.__zenIsMuted = !!muted;
                     applyMuteToMedia(document);
-                    window.__zenAudioContexts.forEach(function(ctx) {
-                        try { muted ? ctx.suspend() : ctx.resume(); } catch(e) {}
-                    });
+                    if (window.__zenAudioContexts) {
+                        window.__zenAudioContexts.forEach(function(ctx) {
+                            try { muted ? ctx.suspend() : ctx.resume(); } catch(e) {}
+                        });
+                    }
                 };
                 ['play', 'playing', 'volumechange', 'loadedmetadata'].forEach(function(ev) {
                     document.addEventListener(ev, function(e) {
                         var t = e.target;
-                        if (t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO') && t.muted !== window.__zenIsMuted && window.__zenIsMuted) {
-                            t.muted = true;
+                        if (t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO') && window.__zenIsMuted) {
+                            try {
+                                t.muted = true;
+                                t.defaultMuted = true;
+                                t.volume = 0;
+                            } catch(e) {}
                         }
                     }, true);
                 });
@@ -1409,13 +1502,38 @@ fun ZenWebPaneView(
                     }
                     checkDoc(document);
 
+                    var curPosMs = 0;
+                    var curDurMs = 0;
+                    var ytp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                    if (ytp && typeof ytp.getCurrentTime === 'function' && typeof ytp.getDuration === 'function') {
+                        var yCur = ytp.getCurrentTime() || 0;
+                        var yDur = ytp.getDuration() || 0;
+                        curPosMs = Math.round(yCur * 1000);
+                        curDurMs = Math.round(yDur * 1000);
+                    } else if (progressMedia) {
+                        curPosMs = Math.round((progressMedia.currentTime || 0) * 1000);
+                        curDurMs = Math.round((progressMedia.duration || 0) * 1000);
+                    }
+
+                    // Protect against reporting stale pre-seek time during active seek transitions
+                    if (window.__zenSeekTargetSec !== undefined) {
+                        var timeSinceSeek = Date.now() - (window.__zenLastSeekTime || 0);
+                        if (timeSinceSeek < 3000) {
+                            var targetMs = Math.round(window.__zenSeekTargetSec * 1000);
+                            if (Math.abs(curPosMs - targetMs) > 2500) {
+                                curPosMs = targetMs;
+                            } else {
+                                delete window.__zenSeekTargetSec;
+                            }
+                        } else {
+                            delete window.__zenSeekTargetSec;
+                        }
+                    }
+
                     if (window.ZenMediaBridge) {
                         window.ZenMediaBridge.onMediaUpdate(hasMedia, isPlaying, document.title || '', location.hostname || '');
                         if (window.ZenMediaBridge.onMediaProgress) {
-                            window.ZenMediaBridge.onMediaProgress(
-                                progressMedia ? Math.round(progressMedia.currentTime * 1000) : 0,
-                                progressMedia ? Math.round(progressMedia.duration * 1000) : 0
-                            );
+                            window.ZenMediaBridge.onMediaProgress(curPosMs, curDurMs);
                         }
                     }
                 }
@@ -1429,6 +1547,10 @@ fun ZenWebPaneView(
                 }, true);
                 document.addEventListener('play', checkAndUpdateMediaState, true);
                 document.addEventListener('pause', checkAndUpdateMediaState, true);
+                document.addEventListener('seeked', function() {
+                    delete window.__zenSeekTargetSec;
+                    setTimeout(checkAndUpdateMediaState, 150);
+                }, true);
             }
 
             if (location.hostname.indexOf('addons.mozilla.org') !== -1 && !window.__zenAmoHooked) {

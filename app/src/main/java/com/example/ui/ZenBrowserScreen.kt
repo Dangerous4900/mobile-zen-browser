@@ -154,7 +154,7 @@ fun ZenBrowserScreen(
 
     val onToggleMediaPlayPause: () -> Unit = {
         val shouldPlay = !uiState.mediaPlaybackState.isPlaying
-        val tabId = uiState.mediaPlaybackState.tabId
+        val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
         val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
         if (wv != null) {
             ZenWebViewController().apply { webView = wv }.setMediaPlaying(shouldPlay)
@@ -174,18 +174,15 @@ fun ZenBrowserScreen(
     val onToggleMediaMute: () -> Unit = {
         val mute = !uiState.mediaPlaybackState.isMuted
         viewModel.setMediaMuted(mute)
-        val tabId = uiState.mediaPlaybackState.tabId
-        val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
-        if (wv != null) {
+        primaryWebController.setMediaMuted(mute)
+        secondaryWebController.setMediaMuted(mute)
+        com.example.ui.components.ZenWebViewManager.getAllWebViews().values.forEach { wv ->
             ZenWebViewController().apply { webView = wv }.setMediaMuted(mute)
-        } else {
-            primaryWebController.setMediaMuted(mute)
-            secondaryWebController.setMediaMuted(mute)
         }
     }
 
     val onDismissMediaBar: () -> Unit = {
-        val tabId = uiState.mediaPlaybackState.tabId
+        val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
         val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
         if (wv != null) {
             ZenWebViewController().apply { webView = wv }.stopAllMedia()
@@ -197,7 +194,7 @@ fun ZenBrowserScreen(
     }
 
     val withMediaController: ((ZenWebViewController) -> Unit) -> Unit = { block ->
-        val tabId = uiState.mediaPlaybackState.tabId
+        val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
         val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
         if (wv != null) {
             block(ZenWebViewController().apply { webView = wv })
@@ -212,7 +209,7 @@ fun ZenBrowserScreen(
     DisposableEffect(primaryWebController, secondaryWebController, uiState.mediaPlaybackState.isPlaying, uiState.mediaPlaybackState.tabId) {
         com.example.ZenMediaBus.onSetPlaying = { playing ->
             val media = uiState.mediaPlaybackState
-            val tabId = media.tabId
+            val tabId = media.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
             val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
             if (wv != null) {
                 ZenWebViewController().apply { webView = wv }.setMediaPlaying(playing)
@@ -261,6 +258,11 @@ fun ZenBrowserScreen(
             viewModel.setSidebarOpen(false)
         }
         // Make the playing video fill the small PiP window; restore the page on exit.
+        val mediaTabId = uiState.mediaPlaybackState.tabId
+        val wv = if (mediaTabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(mediaTabId) else null
+        if (wv != null) {
+            ZenWebViewController().apply { webView = wv }.setPipVideoMode(uiState.isInPictureInPictureMode)
+        }
         primaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
         secondaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
     }

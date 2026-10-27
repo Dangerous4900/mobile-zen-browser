@@ -45,6 +45,8 @@ class ZenMediaService : Service() {
     private var positionMs: Long = PlaybackState.PLAYBACK_POSITION_UNKNOWN
     private var durationMs: Long = 0L
     private var stateRealtime: Long = 0L
+    @Volatile private var userSeekTargetMs: Long = -1L
+    @Volatile private var lastUserSeekRealtime: Long = 0L
     private val handler = Handler(Looper.getMainLooper())
     // Re-acquire the bounded wake lock for as long as playback continues; without this the lock
     // expired after 10 minutes and the phone slept mid-playback.
@@ -144,11 +146,13 @@ class ZenMediaService : Service() {
             handler.removeCallbacks(renewWakeLock)
             if (wakeLock?.isHeld == true) wakeLock?.release()
         }
-        if (lastPlaying == playing && lastTitle == title && lastDomain == domain) return
+        val cleanTitle = title.ifBlank { "Zen Browser" }
+        val cleanDomain = domain.ifBlank { "" }
+        if (lastPlaying == playing && lastTitle == cleanTitle && lastDomain == cleanDomain) return
         val wasPlaying = lastPlaying
         lastPlaying = playing
-        lastTitle = title
-        lastDomain = domain
+        lastTitle = cleanTitle
+        lastDomain = cleanDomain
         if (wasPlaying != playing) {
             val now = SystemClock.elapsedRealtime()
             // Freeze the extrapolated position at the moment of pause/resume so the seek bar doesn't jump.
@@ -159,39 +163,58 @@ class ZenMediaService : Service() {
         publishMetadata()
         applyPlaybackState()
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIF_ID, buildNotification(title, domain, playing))
+        nm.notify(NOTIF_ID, buildNotification(cleanTitle, cleanDomain, playing))
     }
 
     /** Called with the page's real position/duration so Android can show a seek bar and scrub. */
     fun progress(posMs: Long, durMs: Long) {
         val playing = lastPlaying ?: return
-        val durChanged = kotlin.math.abs(durMs - durationMs) > 1000
-        val expected = if (playing && positionMs >= 0) positionMs + (SystemClock.elapsedRealtime() - stateRealtime) else positionMs
-        val drift = kotlin.math.abs(expected - posMs)
-        durationMs = durMs
-        if (durChanged) {
-            publishMetadata()
+        if (durMs > 0) {
+            val durChanged = durationMs > 0 && kotlin.math.abs(durMs - durationMs) > 1000
+            durationMs = durMs
+            if (durChanged) publishMetadata()
         }
-        // WebView reports progress on a 2-second timer, which can jitter or be throttled.
-        // Re-anchoring at 1.5s drift makes Android's interpolated notification seek bar visibly
-        // jump backwards/forwards every poll. Only re-anchor on meaningful drift; explicit seeks
-        // are applied immediately by recordSeekPosition/recordRelativeSeek below.
-        if (durChanged || positionMs < 0 || drift > 4000) {
-            positionMs = posMs
-            stateRealtime = SystemClock.elapsedRealtime()
-            applyPlaybackState()
-            if (durChanged) {
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                nm.notify(NOTIF_ID, buildNotification(lastTitle.orEmpty(), lastDomain.orEmpty(), playing))
+
+        val now = SystemClock.elapsedRealtime()
+
+        // Guard against post-seek snapshot glitch: when the user explicitly scrubs or skips,
+        // page timers / background intervals may report old pre-seek positions while the video
+        // is demuxing. Ignore polls that haven't reached the seek target within a 3.5s window.
+        if (userSeekTargetMs >= 0L) {
+            val elapsedSinceSeek = now - lastUserSeekRealtime
+            if (elapsedSinceSeek < 3500L) {
+                val diffFromTarget = kotlin.math.abs(posMs - userSeekTargetMs)
+                if (diffFromTarget > 3000L) {
+                    return
+                }
             }
+            userSeekTargetMs = -1L
+        }
+
+        val expected = if (playing && positionMs >= 0 && stateRealtime > 0) {
+            positionMs + (now - stateRealtime)
+        } else {
+            positionMs
+        }
+        val drift = kotlin.math.abs(expected - posMs)
+
+        // Only re-anchor if position is unset or drift is noticeable (> 3500ms).
+        // This prevents the notification seek bar from jittering on every 2s poll.
+        if (positionMs < 0 || drift > 3500) {
+            positionMs = posMs
+            stateRealtime = now
+            applyPlaybackState()
         }
     }
 
-    /** Update MediaSession's timeline immediately when the user scrubs the notification. */
+    /** Update MediaSession's timeline immediately when the user scrubs the notification or PiP. */
     private fun recordSeekPosition(requestedMs: Long) {
         val maxPosition = if (durationMs > 0) (durationMs - 1).coerceAtLeast(0L) else Long.MAX_VALUE
         positionMs = requestedMs.coerceIn(0L, maxPosition)
-        stateRealtime = SystemClock.elapsedRealtime()
+        val now = SystemClock.elapsedRealtime()
+        stateRealtime = now
+        lastUserSeekRealtime = now
+        userSeekTargetMs = positionMs
         applyPlaybackState()
     }
 
@@ -254,8 +277,8 @@ class ZenMediaService : Service() {
         )
         val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL_ID) else Notification.Builder(this)
         val seekable = durationMs > 0
-        val playPause = if (playing) action(android.R.drawable.ic_media_pause, "Pause", ACTION_PAUSE, 1)
-        else action(android.R.drawable.ic_media_play, "Play", ACTION_PLAY, 1)
+        val playPause = if (playing) action(android.R.drawable.ic_media_pause, "Pause", ACTION_PAUSE, 101)
+        else action(android.R.drawable.ic_media_play, "Play", ACTION_PLAY, 102)
         b.setSmallIcon(R.drawable.ic_stat_zen_media)
             .setContentTitle(title.ifBlank { "Zen Browser" })
             .setContentText(domain)
@@ -267,15 +290,15 @@ class ZenMediaService : Service() {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
         val compact: IntArray
         if (seekable) {
-            b.addAction(action(android.R.drawable.ic_media_rew, "Back 10 seconds", ACTION_REWIND, 3))
+            b.addAction(action(android.R.drawable.ic_media_rew, "Back 10 seconds", ACTION_REWIND, 103))
             b.addAction(playPause)
-            b.addAction(action(android.R.drawable.ic_media_ff, "Forward 10 seconds", ACTION_FORWARD, 4))
+            b.addAction(action(android.R.drawable.ic_media_ff, "Forward 10 seconds", ACTION_FORWARD, 104))
             compact = intArrayOf(0, 1, 2)
         } else {
             b.addAction(playPause)
             compact = intArrayOf(0)
         }
-        b.addAction(action(android.R.drawable.ic_menu_close_clear_cancel, "Stop", ACTION_STOP, 2))
+        b.addAction(action(android.R.drawable.ic_menu_close_clear_cancel, "Stop", ACTION_STOP, 105))
         b.setStyle(
             Notification.MediaStyle()
                 .setMediaSession(session?.sessionToken)

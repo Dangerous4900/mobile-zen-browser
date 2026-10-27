@@ -21,6 +21,7 @@ import com.example.ui.ZenBrowserScreen
 import com.example.ui.ZenBrowserViewModel
 import com.example.ui.theme.ZenBrowserTheme
 
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.content.res.Configuration
 import android.os.Build
@@ -110,9 +111,8 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(uiState.mediaPlaybackState.isPlaying, uiState.sidebarConfig.playInWindowPipEnabled) {
                 if (canUsePip()) {
-                    // Use our explicit pre-transition path instead of Android 12+ auto-enter.
-                    // Auto-enter transitions before Compose can reliably remove the sidebar.
-                    setPictureInPictureParams(buildPipParams(autoEnter = false))
+                    val shouldAutoEnter = uiState.mediaPlaybackState.isPlaying && uiState.sidebarConfig.playInWindowPipEnabled
+                    setPictureInPictureParams(buildPipParams(autoEnter = shouldAutoEnter, isPlaying = uiState.mediaPlaybackState.isPlaying))
                 }
             }
 
@@ -170,63 +170,104 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        viewModelRef?.onLeavingApp()
-        // Route every Android version through the same explicit transition. This gives Compose
-        // time to remove all sidebar layers before Android captures the PiP activity surface.
-        enterPipIfPlaying()
+        val state = viewModelRef?.uiState?.value ?: return
+        val media = state.mediaPlaybackState
+        val pipEnabled = state.sidebarConfig.playInWindowPipEnabled
+        if (canUsePip() && !isInPictureInPictureMode && media.isPlaying && pipEnabled) {
+            viewModelRef?.setSidebarOpen(false)
+            viewModelRef?.setPictureInPictureMode(true)
+            try {
+                val entered = enterPictureInPictureMode(buildPipParams(autoEnter = true, isPlaying = true))
+                if (!entered && !isInPictureInPictureMode) {
+                    viewModelRef?.setPictureInPictureMode(false)
+                }
+            } catch (_: Exception) {
+                viewModelRef?.setPictureInPictureMode(false)
+            }
+        }
     }
 
     private fun canUsePip(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
 
-    private fun buildPipParams(autoEnter: Boolean): PictureInPictureParams {
-        return PictureInPictureParams.Builder()
+    private fun buildPipParams(
+        autoEnter: Boolean,
+        isPlaying: Boolean = viewModelRef?.uiState?.value?.mediaPlaybackState?.isPlaying == true
+    ): PictureInPictureParams {
+        val b = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
-            .apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    setAutoEnterEnabled(autoEnter)
-                    setSeamlessResizeEnabled(true)
-                }
-            }
-            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val actions = ArrayList<android.app.RemoteAction>()
+            val rewPi = PendingIntent.getService(
+                this, 103,
+                Intent(this, ZenMediaService::class.java).setAction(ZenMediaService.ACTION_REWIND),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            actions.add(
+                android.app.RemoteAction(
+                    android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_rew),
+                    "Rewind 10s",
+                    "Rewind 10 seconds",
+                    rewPi
+                )
+            )
+
+            val playPausePi = PendingIntent.getService(
+                this, if (isPlaying) 102 else 101,
+                Intent(this, ZenMediaService::class.java).setAction(if (isPlaying) ZenMediaService.ACTION_PAUSE else ZenMediaService.ACTION_PLAY),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            actions.add(
+                android.app.RemoteAction(
+                    android.graphics.drawable.Icon.createWithResource(
+                        this,
+                        if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+                    ),
+                    if (isPlaying) "Pause" else "Play",
+                    if (isPlaying) "Pause" else "Play",
+                    playPausePi
+                )
+            )
+
+            val ffPi = PendingIntent.getService(
+                this, 104,
+                Intent(this, ZenMediaService::class.java).setAction(ZenMediaService.ACTION_FORWARD),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            actions.add(
+                android.app.RemoteAction(
+                    android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_ff),
+                    "Forward 10s",
+                    "Forward 10 seconds",
+                    ffPi
+                )
+            )
+            b.setActions(actions)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            b.setAutoEnterEnabled(autoEnter)
+            b.setSeamlessResizeEnabled(true)
+        }
+        return b.build()
     }
 
-    private fun enterPipIfPlaying(): Boolean {
-        val state = viewModelRef?.uiState?.value ?: return false
-        val media = state.mediaPlaybackState
-        val pipEnabled = state.sidebarConfig.playInWindowPipEnabled
-        if (!(media.isPlaying && pipEnabled)) return false
-        return enterPipNow()
-    }
-
-    fun enterPipManual(): Boolean = enterPipNow()
-
-    private fun enterPipNow(): Boolean {
+    fun enterPipManual(): Boolean {
         if (!canUsePip() || isInPictureInPictureMode) return false
         val browserViewModel = viewModelRef ?: return false
-
-        // Switch the Compose UI to its PiP-only layout before requesting the system
-        // transition. Closing the sidebar alone is not enough: its exit animation can
-        // still be visible while Android snapshots/resizes the activity into PiP.
         browserViewModel.setSidebarOpen(false)
         browserViewModel.setPictureInPictureMode(true)
-
-        // Wait for at least one UI frame after the state update. A plain post() can run before
-        // Compose has recomposed, leaving the sidebar in Android's PiP transition snapshot.
-        window.decorView.postDelayed({
-            if (!isInPictureInPictureMode) {
-                try {
-                    val entered = enterPictureInPictureMode(buildPipParams(autoEnter = false))
-                    if (!entered && !isInPictureInPictureMode) {
-                        browserViewModel.setPictureInPictureMode(false)
-                    }
-                } catch (_: Exception) {
-                    browserViewModel.setPictureInPictureMode(false)
-                }
+        return try {
+            val isPlaying = browserViewModel.uiState.value.mediaPlaybackState.isPlaying
+            val entered = enterPictureInPictureMode(buildPipParams(autoEnter = false, isPlaying = isPlaying))
+            if (!entered && !isInPictureInPictureMode) {
+                browserViewModel.setPictureInPictureMode(false)
             }
-        }, 180)
-        return true
+            entered
+        } catch (_: Exception) {
+            browserViewModel.setPictureInPictureMode(false)
+            false
+        }
     }
 
     override fun onPictureInPictureModeChanged(
@@ -235,5 +276,8 @@ class MainActivity : ComponentActivity() {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         viewModelRef?.setPictureInPictureMode(isInPictureInPictureMode)
+        if (isInPictureInPictureMode) {
+            viewModelRef?.setSidebarOpen(false)
+        }
     }
 }

@@ -152,7 +152,7 @@ class ZenRepository(
             } ?: SidebarWidthMode.BALANCED,
             urlBarPosition = prefs[Keys.URL_BAR_POSITION]?.let {
                 runCatching { UrlBarPosition.valueOf(it) }.getOrNull()
-            } ?: UrlBarPosition.BOTTOM,
+            } ?: UrlBarPosition.SIDEBAR_ONLY,
             singleToolbarNewTabBehavior = prefs[Keys.SINGLE_TOOLBAR_NEW_TAB_BEHAVIOR]?.let {
                 runCatching { SingleToolbarNewTabBehavior.valueOf(it) }.getOrNull()
             } ?: SingleToolbarNewTabBehavior.CENTER_TOP_POPUP,

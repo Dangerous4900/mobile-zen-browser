@@ -60,6 +60,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.MusicOff
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
@@ -1250,6 +1251,7 @@ fun ZenSidebarPanel(
                     onOpenLibrary = { onOpenSheet(ActiveModalSheet.LIBRARY) },
                     onOpenStudio = { onOpenSheet(ActiveModalSheet.SIDEBAR_STUDIO) },
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
+                    onToggleMediaMute = onToggleMediaMute,
                     onSelectMediaTab = {
                         if (uiState.mediaPlaybackState.tabId.isNotBlank()) {
                             onSelectTab(uiState.mediaPlaybackState.tabId)
@@ -1974,7 +1976,6 @@ private fun SidebarBottomFooterBar(
             visible = mediaPlaybackState.isActive && enabledTools.contains(SidebarToolItem.MEDIA_BAR)
         ) {
             Surface(
-                onClick = onSelectMediaTab,
                 shape = RoundedCornerShape(50),
                 color = if (isLiquidGlass) Color.White.copy(alpha = 0.16f) else Color(0xFF18181C),
                 border = BorderStroke(
@@ -1989,33 +1990,55 @@ private fun SidebarBottomFooterBar(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 6.dp)
                     ) {
                         Surface(
+                            onClick = onToggleMediaMute,
                             shape = CircleShape,
                             color = if (mediaPlaybackState.isMuted) Color(0xFF3B1D1D) else Color(0xFF27272A),
                             modifier = Modifier
-                                .size(26.dp)
-                                .clickable { onToggleMediaMute() }
+                                .size(28.dp)
                                 .testTag("sidebar_media_mute_button")
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.fillMaxSize()
+                            ) {
                                 Icon(
-                                    imageVector = if (mediaPlaybackState.isMuted) Icons.Default.VolumeOff else Icons.Default.MusicNote,
+                                    imageVector = if (mediaPlaybackState.isMuted) Icons.Default.MusicOff else Icons.Default.MusicNote,
                                     contentDescription = if (mediaPlaybackState.isMuted) "Unmute media" else "Mute media",
-                                    tint = Color(0xFFF4F4F6),
-                                    modifier = Modifier.size(14.dp)
+                                    tint = if (mediaPlaybackState.isMuted) Color(0xFFEF4444) else Color(0xFFF4F4F6),
+                                    modifier = Modifier.size(15.dp)
                                 )
+                                if (mediaPlaybackState.isMuted) {
+                                    Canvas(modifier = Modifier.size(15.dp)) {
+                                        drawLine(
+                                            color = Color(0xFFEF4444),
+                                            start = androidx.compose.ui.geometry.Offset(x = size.width * 0.18f, y = size.height * 0.18f),
+                                            end = androidx.compose.ui.geometry.Offset(x = size.width * 0.82f, y = size.height * 0.82f),
+                                            strokeWidth = 2.2f,
+                                            cap = androidx.compose.ui.graphics.StrokeCap.Round
+                                        )
+                                    }
+                                }
                             }
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(onClick = onSelectMediaTab)
+                                .padding(vertical = 2.dp)
+                        ) {
                             Text(
                                 text = mediaPlaybackState.title.ifBlank { "Playing Media" },
                                 style = MaterialTheme.typography.labelMedium,
@@ -2059,7 +2082,7 @@ private fun SidebarBottomFooterBar(
                         }
                         Surface(
                             shape = CircleShape,
-                            color = Color.White.copy(alpha = 0.12f)
+                            color = if (mediaPlaybackState.isPlaying) Color(0xFF2563EB) else Color.White.copy(alpha = 0.16f)
                         ) {
                             IconButton(
                                 onClick = onToggleMediaPlayPause,
@@ -2071,7 +2094,7 @@ private fun SidebarBottomFooterBar(
                                     imageVector = if (mediaPlaybackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                     contentDescription = if (mediaPlaybackState.isPlaying) "Pause" else "Play",
                                     tint = Color(0xFFF4F4F6),
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
                         }

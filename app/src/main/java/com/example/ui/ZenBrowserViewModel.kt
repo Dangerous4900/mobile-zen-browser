@@ -1320,31 +1320,54 @@ class ZenBrowserViewModel(
     ) {
         sessionState.update { current ->
             val previous = current.mediaPlaybackState
-            // Every WebView polls independently. An idle tab must not steal ownership from the
-            // tab that is actually playing; otherwise the notification targets the wrong page
-            // whenever the sidebar, another tab, or the app lifecycle changes.
+            val effectiveTabId = tabId.ifBlank { previous.tabId }.ifBlank { current.activeTabId }
+
+            // If another tab reports idle/no media while we have an active media session on a different tab,
+            // ignore the idle report so background tabs or newly selected tabs don't kill playback state.
             if (previous.isActive && previous.tabId.isNotBlank() &&
-                previous.tabId != tabId && !isPlaying
+                effectiveTabId.isNotBlank() && previous.tabId != effectiveTabId && !isPlaying
             ) {
-                current
-            } else if (!isActive && previous.isActive && previous.tabId == tabId) {
-                // Background WebViews and cross-origin embeds can temporarily hide media elements
-                // from the injected poll. Do not let a missing DOM snapshot kill the session.
-                current
-            } else {
-                current.copy(
-                    mediaPlaybackState = MediaPlaybackState(
-                        // Keep controls alive for paused media until dismissed or the tab is closed.
-                        isActive = isActive || (previous.isActive && previous.tabId == tabId),
-                        isPlaying = isPlaying,
-                        // Mute is user intent: retain it only for the same media owner.
-                        isMuted = previous.isMuted && previous.tabId == tabId,
-                        title = title.ifBlank { domain },
-                        domain = domain,
-                        tabId = tabId
-                    )
-                )
+                return@update current
             }
+
+            // Keep the media bar/session active when paused or when DOM polling temporarily misses the element.
+            val resolvedActive = when {
+                isActive -> true
+                isPlaying -> true
+                previous.isActive && (previous.tabId == effectiveTabId || previous.tabId.isBlank()) -> true
+                else -> false
+            }
+
+            // Stabilize title to avoid title jitter causing repeated notification re-draws
+            val resolvedTitle = when {
+                title.isNotBlank() && !title.equals("YouTube", ignoreCase = true) && !title.equals(domain, ignoreCase = true) -> title
+                previous.title.isNotBlank() && !previous.title.equals("YouTube", ignoreCase = true) && !previous.title.equals(domain, ignoreCase = true) -> previous.title
+                title.isNotBlank() -> title
+                previous.title.isNotBlank() -> previous.title
+                else -> domain.ifBlank { "Zen Browser" }
+            }
+
+            val resolvedDomain = domain.ifBlank { previous.domain }
+
+            if (previous.isActive == resolvedActive &&
+                previous.isPlaying == isPlaying &&
+                previous.title == resolvedTitle &&
+                previous.domain == resolvedDomain &&
+                previous.tabId == effectiveTabId
+            ) {
+                return@update current
+            }
+
+            current.copy(
+                mediaPlaybackState = MediaPlaybackState(
+                    isActive = resolvedActive,
+                    isPlaying = isPlaying,
+                    isMuted = if (previous.tabId.isNotBlank() && effectiveTabId.isNotBlank() && previous.tabId != effectiveTabId) false else previous.isMuted,
+                    title = resolvedTitle,
+                    domain = resolvedDomain,
+                    tabId = effectiveTabId
+                )
+            )
         }
     }
 
@@ -1354,7 +1377,7 @@ class ZenBrowserViewModel(
 
     fun dismissMediaPlaybackBar() {
         sessionState.update {
-            it.copy(mediaPlaybackState = MediaPlaybackState(isActive = false))
+            it.copy(mediaPlaybackState = MediaPlaybackState(isActive = false, isPlaying = false))
         }
     }
 
