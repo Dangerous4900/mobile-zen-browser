@@ -2280,8 +2280,12 @@ class ZenBrowserViewModel(
 
     fun installExtensionFromAmoPage(url: String, pageTitle: String?) {
         val parsed = runCatching { java.net.URI(url) }.getOrNull()
-        val scheme = parsed?.scheme?.lowercase()
-        val host = parsed?.host?.lowercase()
+        if (parsed == null) {
+            showBanner("Extension installs require a valid HTTPS URL")
+            return
+        }
+        val scheme = parsed.scheme?.lowercase()
+        val host = parsed.host?.lowercase()
         if (scheme != "https" || host.isNullOrBlank()) {
             showBanner("Extension installs require a valid HTTPS URL")
             return
@@ -2359,11 +2363,13 @@ class ZenBrowserViewModel(
                 }
 
                 val packageUri = java.net.URI(xpiUrl)
-                if (packageUri.scheme != "https" ||
-                    !(packageUri.host?.equals("addons.mozilla.org", ignoreCase = true) == true ||
-                      packageUri.host?.endsWith(".addons.mozilla.org", ignoreCase = true) == true)
+                val packageHost = packageUri.host?.lowercase()
+                val packageIsAmo = packageHost == "addons.mozilla.org" ||
+                    packageHost?.endsWith(".addons.mozilla.org") == true
+                if (packageUri.scheme != "https" || packageHost.isNullOrBlank() ||
+                    (isAmo && !isDirectXpi && !packageIsAmo)
                 ) {
-                    throw IllegalArgumentException("The XPI download must come from addons.mozilla.org over HTTPS")
+                    throw IllegalArgumentException("The XPI download must use HTTPS and have a valid host")
                 }
                 val bytes = downloadExtensionBytes(xpiUrl, 20 * 1024 * 1024)
                 importFirefoxXpiPackage(
@@ -2388,6 +2394,7 @@ class ZenBrowserViewModel(
             connection.setRequestProperty("User-Agent", "ZenBrowser-Android ExtensionInstaller")
             connection.connect()
             val status = connection.responseCode
+            if (connection.url.protocol != "https") throw java.io.IOException("Extension downloads may not redirect to HTTP")
             if (status !in 200..299) throw java.io.IOException("HTTP $status")
             val declaredLength = connection.contentLengthLong
             if (declaredLength > maxBytes) throw java.io.IOException("Download exceeds the size limit")
