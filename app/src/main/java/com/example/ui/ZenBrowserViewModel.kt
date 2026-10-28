@@ -229,25 +229,52 @@ data class ZenBrowserUiState(
             .joinToString("\n") { it.jsPayload }
 
     fun matchesExtensionUrlPattern(url: String, patterns: String): Boolean {
-        if (url.startsWith("zen://") || url.isBlank() || url == "about:blank") return false
-        val trimmedPatterns = patterns.trim()
-        if (trimmedPatterns.isEmpty() || trimmedPatterns == "*://*/*" || trimmedPatterns == "<all_urls>" || trimmedPatterns == "*") {
-            return true
-        }
-        val host = ZenPrivacyEngine.extractHostDisplay(url).lowercase()
-        return trimmedPatterns.split(",").any { rawPattern ->
-            val p = rawPattern.trim().lowercase()
-            when {
-                p == "*://*/*" || p == "<all_urls>" || p == "*" -> true
-                p.contains("*.") -> {
-                    val domainPart = p.substringAfter("*.").substringBefore("/")
-                    host == domainPart || host.endsWith(".$domainPart")
+        if (url.isBlank() || url == "about:blank" || url.startsWith("zen://")) return false
+        val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase() ?: return false
+        if (scheme !in setOf("http", "https")) return false
+
+        val candidates = patterns.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        if (candidates.isEmpty()) return true
+        val host = uri.host?.lowercase() ?: return false
+        val fullUrl = url.lowercase()
+        val pathAndQuery = (uri.rawPath.orEmpty().ifEmpty { "/" } +
+            (uri.rawQuery?.let { "?$it" } ?: "")).lowercase()
+
+        fun globMatches(value: String, glob: String): Boolean {
+            val regex = buildString {
+                append('^')
+                glob.forEach { ch ->
+                    if (ch == '*') append(".*") else append(Regex.escape(ch.toString()))
                 }
-                else -> {
-                    val clean = p.removePrefix("https://").removePrefix("http://").removePrefix("*://").substringBefore("/")
-                    clean.isEmpty() || host.contains(clean)
-                }
+                append('$')
             }
+            return runCatching { Regex(regex, RegexOption.IGNORE_CASE).matches(value) }.getOrDefault(false)
+        }
+
+        return candidates.any { raw ->
+            val pattern = raw.lowercase()
+            if (pattern == "*" || pattern == "<all_urls>" || pattern == "*://*/*") return@any true
+
+            // Tampermonkey/Greasemonkey @include entries are URL globs, not WebExtension match patterns.
+            if (!pattern.contains("://")) {
+                return@any globMatches(fullUrl, pattern)
+            }
+
+            val schemePattern = pattern.substringBefore("://")
+            if (schemePattern != "*" && schemePattern != scheme) return@any false
+            val afterScheme = pattern.substringAfter("://")
+            val patternHost = afterScheme.substringBefore('/').substringBefore(':')
+            val patternPath = afterScheme.substringAfter('/', "/*").let { "/$it" }
+            val hostMatches = when {
+                patternHost == "*" -> true
+                patternHost.startsWith("*.") -> {
+                    val domain = patternHost.removePrefix("*.")
+                    host == domain || host.endsWith(".$domain")
+                }
+                else -> host == patternHost
+            }
+            hostMatches && globMatches(pathAndQuery, patternPath)
         }
     }
 }
@@ -2333,8 +2360,8 @@ class ZenBrowserViewModel(
 
                 val packageUri = java.net.URI(xpiUrl)
                 if (packageUri.scheme != "https" ||
-                    !(packageUri.host.equals("addons.mozilla.org", ignoreCase = true) ||
-                      packageUri.host.endsWith(".addons.mozilla.org", ignoreCase = true))
+                    !(packageUri.host?.equals("addons.mozilla.org", ignoreCase = true) == true ||
+                      packageUri.host?.endsWith(".addons.mozilla.org", ignoreCase = true) == true)
                 ) {
                     throw IllegalArgumentException("The XPI download must come from addons.mozilla.org over HTTPS")
                 }
