@@ -2252,68 +2252,133 @@ class ZenBrowserViewModel(
     }
 
     fun installExtensionFromAmoPage(url: String, pageTitle: String?) {
+        val parsed = runCatching { java.net.URI(url) }.getOrNull()
+        val scheme = parsed?.scheme?.lowercase()
+        val host = parsed?.host?.lowercase()
+        if (scheme != "https" || host.isNullOrBlank()) {
+            showBanner("Extension installs require a valid HTTPS URL")
+            return
+        }
+
         val lower = url.lowercase()
+        if (lower.endsWith(".crx") || lower.contains(".crx?")) {
+            showBanner("Chrome .crx packages are not compatible with this browser engine. Import a Firefox .xpi or userscript instead.")
+            return
+        }
+
         if (lower.endsWith(".user.js") || lower.contains(".user.js?")) {
             viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
-                    val content = java.net.URL(url).readText()
-                    installUserscript(content, fallbackUrl = url, fallbackName = pageTitle)
+                    val script = downloadExtensionText(url, 1_000_000)
+                    if (!script.contains("// ==UserScript==", ignoreCase = true)) {
+                        showBanner("This download is not a valid userscript")
+                        return@launch
+                    }
+                    installUserscript(script, fallbackUrl = url, fallbackName = pageTitle)
                 } catch (e: Exception) {
-                    installUserscript(
-                        "// ==UserScript==\n// @name ${pageTitle ?: "Userscript"}\n// @match *://*/*\n// ==/UserScript==\nconsole.log('Zen Userscript Active');",
-                        fallbackUrl = url,
-                        fallbackName = pageTitle
-                    )
+                    showBanner("Could not download userscript: ${e.localizedMessage ?: "network error"}")
                 }
             }
             return
         }
 
-        val existingList = uiState.value.firefoxExtensions
-        val matchedBuiltIn = existingList.find {
-            it.amoSlug.isNotBlank() && (lower.contains("/${it.amoSlug.lowercase()}/") || lower.endsWith("/${it.amoSlug.lowercase()}") || lower.contains(it.amoSlug.lowercase()))
+        val isAmo = host == "addons.mozilla.org" || host.endsWith(".addons.mozilla.org")
+        val isDirectXpi = parsed.path?.lowercase()?.endsWith(".xpi") == true
+        if (!isAmo && !isDirectXpi) {
+            showBanner("Unsupported extension source. Use Mozilla Add-ons, a Firefox .xpi, or a .user.js script.")
+            return
         }
-        viewModelScope.launch {
-            if (matchedBuiltIn != null) {
-                repository.updateFirefoxExtension(
-                    matchedBuiltIn.copy(isInstalled = true, isEnabled = true)
-                )
-                showBanner("Installed '${matchedBuiltIn.name}' from Mozilla Add-ons")
-            } else {
-                val slug = if (lower.contains("/addon/")) {
-                    lower.substringAfter("/addon/", "").substringBefore("/").substringBefore("?")
-                } else {
-                    url.substringAfterLast("/").substringBefore("?").replace(".xpi", "")
-                }
-                val cleanTitle = pageTitle
-                    ?.substringBefore(" – Get this Extension")
-                    ?.substringBefore(" — Get this Extension")
-                    ?.substringBefore(" - Android")
-                    ?.substringBefore(" — Firefox")
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: slug.replace("-", " ").replaceFirstChar { it.uppercase() }.ifBlank { "Desktop Extension" }
 
-                val ext = FirefoxExtensionEntity(
-                    id = "ff_amo_${slug.ifBlank { UUID.randomUUID().toString().take(6) }}",
-                    name = cleanTitle,
-                    author = "Mozilla Add-ons (AMO)",
-                    version = "1.0.0",
-                    description = "Installed directly from addons.mozilla.org ($slug)",
-                    category = "Desktop WebExtension",
-                    permissions = "Access your data for all websites",
-                    isInstalled = true,
-                    isEnabled = true,
-                    allowInPrivate = true,
-                    runAt = "document_idle",
-                    matchPatterns = "*://*/*",
-                    amoSlug = slug,
-                    cssPayload = "",
-                    jsPayload = "console.log('Zen Desktop Extension Active: ${cleanTitle.replace("'", "")}');"
+        // A direct .xpi URL is passed by the download interceptor. AMO pages are resolved
+        // through Mozilla's API so we download the actual package rather than saving a fake
+        // extension record that only logs to the console.
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val currentExtensions = uiState.value.firefoxExtensions
+                val slug = if (isAmo) {
+                    val segments = parsed.path.orEmpty().split('/').filter { it.isNotBlank() }
+                    val addonIndex = segments.indexOfFirst { it.equals("addon", ignoreCase = true) }
+                    if (addonIndex >= 0 && addonIndex + 1 < segments.size) segments[addonIndex + 1] else ""
+                } else {
+                    parsed.path.orEmpty().substringAfterLast('/').removeSuffix(".xpi")
+                }
+
+                val builtIn = currentExtensions.find { ext ->
+                    slug.isNotBlank() && ext.amoSlug.isNotBlank() &&
+                        ext.amoSlug.equals(slug, ignoreCase = true)
+                }
+                if (builtIn != null) {
+                    repository.updateFirefoxExtension(builtIn.copy(isInstalled = true, isEnabled = true))
+                    showBanner("Enabled built-in compatibility for '${builtIn.name}'")
+                    return@launch
+                }
+
+                val xpiUrl = if (isDirectXpi) {
+                    url
+                } else {
+                    if (slug.isBlank()) {
+                        showBanner("Open a specific Firefox add-on page before installing")
+                        return@launch
+                    }
+                    val apiUrl = "https://addons.mozilla.org/api/v5/addons/addon/" +
+                        java.net.URLEncoder.encode(slug, "UTF-8") + "/"
+                    val metadata = org.json.JSONObject(downloadExtensionText(apiUrl, 1_000_000))
+                    metadata.optJSONObject("current_version")
+                        ?.optJSONArray("files")
+                        ?.optJSONObject(0)
+                        ?.optString("url")
+                        ?.takeIf { it.startsWith("https://addons.mozilla.org/") }
+                        ?: throw IllegalArgumentException("Mozilla did not provide a downloadable XPI")
+                }
+
+                val packageUri = java.net.URI(xpiUrl)
+                if (packageUri.scheme != "https" ||
+                    !(packageUri.host.equals("addons.mozilla.org", ignoreCase = true) ||
+                      packageUri.host.endsWith(".addons.mozilla.org", ignoreCase = true))
+                ) {
+                    throw IllegalArgumentException("The XPI download must come from addons.mozilla.org over HTTPS")
+                }
+                val bytes = downloadExtensionBytes(xpiUrl, 20 * 1024 * 1024)
+                importFirefoxXpiPackage(
+                    fileName = slug.ifBlank { "firefox-addon" } + ".xpi",
+                    inputStream = java.io.ByteArrayInputStream(bytes)
                 )
-                repository.insertFirefoxExtension(ext)
-                showBanner("Installed Desktop Extension '$cleanTitle' to Zen Browser")
+            } catch (e: Exception) {
+                showBanner("Could not install desktop extension: ${e.localizedMessage ?: "unsupported package"}")
             }
+        }
+    }
+
+    private fun downloadExtensionText(url: String, maxBytes: Int): String =
+        downloadExtensionBytes(url, maxBytes).toString(Charsets.UTF_8)
+
+    private fun downloadExtensionBytes(url: String, maxBytes: Int): ByteArray {
+        val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        connection.connectTimeout = 12_000
+        connection.readTimeout = 20_000
+        connection.instanceFollowRedirects = true
+        try {
+            connection.setRequestProperty("User-Agent", "ZenBrowser-Android ExtensionInstaller")
+            connection.connect()
+            val status = connection.responseCode
+            if (status !in 200..299) throw java.io.IOException("HTTP $status")
+            val declaredLength = connection.contentLengthLong
+            if (declaredLength > maxBytes) throw java.io.IOException("Download exceeds the size limit")
+            connection.inputStream.use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    if (total > maxBytes) throw java.io.IOException("Download exceeds the size limit")
+                    output.write(buffer, 0, count)
+                }
+                return output.toByteArray()
+            }
+        } finally {
+            connection.disconnect()
         }
     }
 
