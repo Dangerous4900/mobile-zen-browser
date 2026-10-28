@@ -105,6 +105,7 @@ import com.example.data.HomeScreenStyle
 import com.example.data.HomeShortcutEntity
 import com.example.data.TabEntity
 import com.example.data.PasswordEntity
+import com.example.privacy.ZenAdBlockList
 import com.example.privacy.ZenPrivacyEngine
 import com.example.ui.ActiveModalSheet
 import com.example.ui.ZenBrowserUiState
@@ -1635,7 +1636,12 @@ fun ZenWebPaneView(
                             val lowerUrl = reqUrl.lowercase()
 
                             // Whitelist essential site media streams, CDNs, fonts, and YouTube resources so video/page loading is smooth
-                            val isEssentialSiteResource = lowerUrl.contains("googlevideo.com") ||
+                            val isYoutubeAdRequest = lowerUrl.contains("youtube.com/pagead") ||
+                                lowerUrl.contains("/api/stats/ads") ||
+                                lowerUrl.contains("youtube.com/ptracking") ||
+                                lowerUrl.contains("/get_midroll_") ||
+                                lowerUrl.contains("youtube.com/youtubei/v1/log_event") && lowerUrl.contains("adformat")
+                            val isEssentialSiteResource = !isYoutubeAdRequest && (lowerUrl.contains("googlevideo.com") ||
                                 lowerUrl.contains("ytimg.com") ||
                                 lowerUrl.contains("youtube.com") ||
                                 lowerUrl.contains("youtu.be") ||
@@ -1644,7 +1650,7 @@ fun ZenWebPaneView(
                                 (lowerUrl.contains("youtube.com") &&
                                     !lowerUrl.contains("/pagead/") &&
                                     !lowerUrl.contains("doubleclick") &&
-                                    !lowerUrl.contains("/api/stats/ads"))
+                                    !lowerUrl.contains("/api/stats/ads")))
                             if (isEssentialSiteResource) {
                                 return super.shouldInterceptRequest(view, request)
                             }
@@ -1696,7 +1702,7 @@ fun ZenWebPaneView(
                             }
                             val shouldBlockAdRedirects = currentPrivacyCfg.adBlockerLevel != com.example.data.AdBlockerLevel.OFF || currentPrivacyCfg.blockTrackersAndAds || isUblockActive
                             if (shouldBlockAdRedirects) {
-                                if (ZenPrivacyEngine.isAdOrPopupRedirect(targetUrl)) {
+                                if (ZenPrivacyEngine.isAdOrPopupRedirect(targetUrl, userInitiated = request?.hasGesture() == true && request.isRedirect != true)) {
                                     val adRedirect = BlockedTrackerEvent(
                                         domain = ZenPrivacyEngine.extractHostDisplay(targetUrl),
                                         category = "Blocked Ad Popup Redirect"
@@ -1792,6 +1798,12 @@ fun ZenWebPaneView(
                                 customJsPayload = dynamicJs
                             )
                             view?.evaluateJavascript(earlyScript, null)
+                            if (currentPrivacyCfg.adBlockerLevel != com.example.data.AdBlockerLevel.OFF || currentPrivacyCfg.blockTrackersAndAds) {
+                                val cosmetic = ZenAdBlockList.cosmeticScript()
+                                if (cosmetic.isNotEmpty()) view?.evaluateJavascript(cosmetic, null)
+                                view?.evaluateJavascript(ZenAdBlockList.ANNOYANCE_SCRIPT, null)
+                                view?.evaluateJavascript(ZenAdBlockList.YOUTUBE_SCRIPT, null)
+                            }
                             view?.evaluateJavascript(mediaAndAmoScript, null)
                             view?.evaluateJavascript(ZenPrivacyEngine.buildDesktopWebExtensionShimScript(), null)
                             if (isDesktopMode) {
@@ -1810,6 +1822,17 @@ fun ZenWebPaneView(
                             super.onPageFinished(view, url)
                             if (controller.isMuted) {
                                 view?.evaluateJavascript("window.__zenApplyMute && window.__zenApplyMute(true);", null)
+                            }
+                            if (currentPrivacyCfg.adBlockerLevel != com.example.data.AdBlockerLevel.OFF || currentPrivacyCfg.blockTrackersAndAds) {
+                                // Only re-send the large stylesheet if the early injection didn't land (cheap check first).
+                                view?.evaluateJavascript("window.__zenCosmeticApplied === true") { applied ->
+                                    if (applied != "true") {
+                                        val cosmetic = ZenAdBlockList.cosmeticScript()
+                                        if (cosmetic.isNotEmpty()) view.evaluateJavascript(cosmetic, null)
+                                    }
+                                }
+                                view?.evaluateJavascript(ZenAdBlockList.ANNOYANCE_SCRIPT, null)
+                                view?.evaluateJavascript(ZenAdBlockList.YOUTUBE_SCRIPT, null)
                             }
                             // Only reset pull-to-refresh if the user is NOT actively holding the pull gesture
                             if (!isPullingGestureActive) {

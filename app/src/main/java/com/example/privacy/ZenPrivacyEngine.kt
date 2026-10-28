@@ -314,6 +314,11 @@ object ZenPrivacyEngine {
     }
 
     fun matchTrackerRequest(requestUrl: String): BlockedTrackerEvent? {
+        // Fast path: ~46k-domain EasyList/EasyPrivacy/uBO list (hash lookup, no substring scans)
+        val reqHost = try { Uri.parse(requestUrl).host } catch (_: Exception) { null }
+        if (ZenAdBlockList.isBlockedHost(reqHost)) {
+            return BlockedTrackerEvent(domain = reqHost ?: "ad-server", category = "Ad Network")
+        }
         val lower = requestUrl.lowercase()
         for (tracker in TRACKER_DOMAINS) {
             val cleanTracker = tracker.trim()
@@ -392,15 +397,23 @@ object ZenPrivacyEngine {
             lower.contains("youtube.com/pagead")
     }
 
-    fun isAdOrPopupRedirect(url: String): Boolean {
+    /**
+     * @param userInitiated true when the navigation came from a real tap. Keyword heuristics are only
+     * applied to navigations the page started by itself (popunders / auto redirects); a user tap
+     * is only blocked when it points at a known ad domain. This stops OAuth `/redirect` URLs and
+     * ordinary links containing words like "stake" from being blocked.
+     */
+    fun isAdOrPopupRedirect(url: String, userInitiated: Boolean = false): Boolean {
         if (url.isBlank() || url == "about:blank" || url.startsWith("zen://")) return false
+        if (ZenAdBlockList.isBlockedHost(try { Uri.parse(url).host } catch (_: Exception) { null })) return true
+        if (userInitiated) return isAdOrTrackerUrl(url)
         val lower = url.lowercase()
         val popupKeywords = listOf(
             "popads", "popcash", "propellerads", "onclickads", "exoclick", "juicyads",
             "adsterra", "trafficjunky", "ad-click", "clickad", "adclick", "redirect-ad",
             "adserver", "popunder", "adgate", "monetag", "hilltopads", "a-ads", "a360",
-            "bet365", "1xbet", "stake", "casino", "spin2win", "sweepstakes", "betting",
-            "onclick", "popunder", "redirect", "adsterra", "ad-maven", "clck"
+            "bet365", "1xbet", "stake.com", "casino", "spin2win", "sweepstakes", "betting",
+            "onclickads", "popunder", "adsterra", "ad-maven"
         )
         return popupKeywords.any { lower.contains(it) } || isAdOrTrackerUrl(url)
     }
