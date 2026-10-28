@@ -2496,20 +2496,36 @@ class ZenBrowserViewModel(
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val entryMap = mutableMapOf<String, String>()
+                var entryCount = 0
+                var selectedBytes = 0L
                 java.util.zip.ZipInputStream(inputStream).use { zis ->
                     var entry = zis.nextEntry
                     while (entry != null) {
-                        val name = entry.name
-                        if (!entry.isDirectory && (
-                                name.equals("manifest.json", ignoreCase = true) ||
-                                    name.endsWith(".js", ignoreCase = true) ||
-                                    name.endsWith(".css", ignoreCase = true)
-                                ) && entryMap.size < 40
-                        ) {
-                            val bytes = zis.readBytes()
-                            if (bytes.size <= 512_000) {
-                                entryMap[name.removePrefix("./")] = bytes.toString(Charsets.UTF_8)
+                        entryCount++
+                        if (entryCount > 1_000) throw IllegalArgumentException("Archive contains too many files")
+                        val normalizedName = entry.name.replace('\\', '/')
+                            .removePrefix("./")
+                            .trimStart('/')
+                        val safePath = normalizedName.split('/').none { it == ".." }
+                        val lowerName = normalizedName.lowercase()
+                        val shouldRead = !entry.isDirectory && safePath &&
+                            (lowerName == "manifest.json" ||
+                                lowerName.endsWith(".js") || lowerName.endsWith(".css"))
+                        if (shouldRead && entryMap.size < 120) {
+                            val output = java.io.ByteArrayOutputStream()
+                            val buffer = ByteArray(8192)
+                            var fileBytes = 0
+                            while (true) {
+                                val count = zis.read(buffer)
+                                if (count < 0) break
+                                fileBytes += count
+                                selectedBytes += count
+                                if (fileBytes > 512 * 1024 || selectedBytes > 8L * 1024 * 1024) {
+                                    throw IllegalArgumentException("Extension scripts exceed the import size limit")
+                                }
+                                output.write(buffer, 0, count)
                             }
+                            entryMap[lowerName] = output.toByteArray().toString(Charsets.UTF_8)
                         }
                         zis.closeEntry()
                         entry = zis.nextEntry
@@ -2517,118 +2533,103 @@ class ZenBrowserViewModel(
                 }
 
                 val manifestRaw = entryMap["manifest.json"]
-                    ?: entryMap.entries.firstOrNull { it.key.endsWith("manifest.json", ignoreCase = true) }?.value
+                    ?: throw IllegalArgumentException("The XPI has no root manifest.json")
+                val json = org.json.JSONObject(manifestRaw)
+                val rawName = json.optString("name", "")
+                val extName = rawName.takeIf { it.isNotBlank() && !it.startsWith("__MSG_") }
+                    ?: fileName.substringBeforeLast(".").replace("-", " ").replace("_", " ").trim()
+                        .ifEmpty { "Firefox XPI Add-on" }
+                val extVersion = json.optString("version", "1.0.0").ifBlank { "1.0.0" }
+                val rawDescription = json.optString("description", "")
+                val extAuthor = json.optString("author", "Firefox XPI Package")
+                val permissions = json.optJSONArray("permissions")
+                val extPermissions = if (permissions != null) {
+                    (0 until permissions.length()).map { permissions.optString(it) }
+                        .filter { it.isNotBlank() }.distinct().joinToString(", ")
+                } else {
+                    "No declared permissions"
+                }
 
-                var extName = fileName.substringBeforeLast(".").replace("-", " ").replace("_", " ").trim()
-                    .ifEmpty { "Firefox XPI Add-on" }
-                var extVersion = "1.0.0"
-                var extDesc = "Installed from local Firefox XPI package ($fileName)"
-                var extAuthor = "Firefox XPI Package"
-                var extPermissions = "Access your data for matching sites"
-                var extMatchPatterns = "*://*/*"
-                var extRunAt = "document_idle"
+                val contentScripts = json.optJSONArray("content_scripts")
+                    ?: throw IllegalArgumentException(
+                        "This desktop add-on has no content_scripts. Background scripts, popups, and browser APIs cannot run in Android WebView."
+                    )
+                if (contentScripts.length() == 0) {
+                    throw IllegalArgumentException("This add-on does not define supported content scripts")
+                }
+
+                val matchesSet = linkedSetOf<String>()
                 val collectedCss = StringBuilder()
                 val collectedJs = StringBuilder()
-
-                if (!manifestRaw.isNullOrBlank()) {
-                    runCatching {
-                        val json = org.json.JSONObject(manifestRaw)
-                        val rawName = json.optString("name", "")
-                        if (rawName.isNotBlank() && !rawName.startsWith("__MSG_")) {
-                            extName = rawName
+                var extRunAt = "document_idle"
+                for (i in 0 until contentScripts.length()) {
+                    val cs = contentScripts.optJSONObject(i) ?: continue
+                    when (cs.optString("run_at", "document_idle")) {
+                        "document_start" -> extRunAt = "document_start"
+                        "document_end" -> if (extRunAt != "document_start") extRunAt = "document_end"
+                        else -> if (extRunAt != "document_start" && extRunAt != "document_end") extRunAt = "document_idle"
+                    }
+                    val matches = cs.optJSONArray("matches")
+                    if (matches != null) {
+                        for (m in 0 until matches.length()) {
+                            val pattern = matches.optString(m).trim()
+                            if (pattern.isNotBlank()) matchesSet.add(pattern)
                         }
-                        val rawVer = json.optString("version", "")
-                        if (rawVer.isNotBlank()) {
-                            extVersion = rawVer
+                    }
+                    val css = cs.optJSONArray("css")
+                    if (css != null) {
+                        for (c in 0 until css.length()) {
+                            val pathKey = css.optString(c).replace('\\', '/').removePrefix("./").trimStart('/').lowercase()
+                            entryMap[pathKey]?.let { collectedCss.append(it).append('\n') }
                         }
-                        val rawDesc = json.optString("description", "")
-                        if (rawDesc.isNotBlank() && !rawDesc.startsWith("__MSG_")) {
-                            extDesc = rawDesc
-                        }
-                        val rawAuthor = json.optString("author", "")
-                        if (rawAuthor.isNotBlank()) {
-                            extAuthor = rawAuthor
-                        }
-                        val permsArr = json.optJSONArray("permissions")
-                        if (permsArr != null && permsArr.length() > 0) {
-                            val permsList = mutableListOf<String>()
-                            for (i in 0 until permsArr.length()) {
-                                permsList.add(permsArr.optString(i))
-                            }
-                            extPermissions = permsList.filter { it.isNotBlank() }.joinToString(", ")
-                        }
-
-                        val contentScripts = json.optJSONArray("content_scripts")
-                        if (contentScripts != null && contentScripts.length() > 0) {
-                            val matchesSet = mutableSetOf<String>()
-                            for (i in 0 until contentScripts.length()) {
-                                val cs = contentScripts.optJSONObject(i) ?: continue
-                                val runAtVal = cs.optString("run_at", "")
-                                if (runAtVal.isNotBlank()) extRunAt = runAtVal
-                                val matchesArr = cs.optJSONArray("matches")
-                                if (matchesArr != null) {
-                                    for (m in 0 until matchesArr.length()) {
-                                        val pat = matchesArr.optString(m)
-                                        if (pat.isNotBlank()) matchesSet.add(pat)
-                                    }
-                                }
-                                val cssArr = cs.optJSONArray("css")
-                                if (cssArr != null) {
-                                    for (c in 0 until cssArr.length()) {
-                                        val path = cssArr.optString(c).removePrefix("./").removePrefix("/")
-                                        entryMap[path]?.let { collectedCss.append(it).append("\n") }
-                                    }
-                                }
-                                val jsArr = cs.optJSONArray("js")
-                                if (jsArr != null) {
-                                    for (j in 0 until jsArr.length()) {
-                                        val path = jsArr.optString(j).removePrefix("./").removePrefix("/")
-                                        entryMap[path]?.let { collectedJs.append(it).append("\n") }
-                                    }
-                                }
-                            }
-                            if (matchesSet.isNotEmpty()) {
-                                extMatchPatterns = matchesSet.joinToString(", ")
-                            }
+                    }
+                    val js = cs.optJSONArray("js")
+                    if (js != null) {
+                        for (j in 0 until js.length()) {
+                            val pathKey = js.optString(j).replace('\\', '/').removePrefix("./").trimStart('/').lowercase()
+                            entryMap[pathKey]?.let { collectedJs.append(it).append('\n') }
                         }
                     }
                 }
 
-                // Fallback: if no content_scripts were explicitly listed, include top-level .css/.js files
-                if (collectedCss.isBlank()) {
-                    entryMap.filter { it.key.endsWith(".css", ignoreCase = true) }.values.take(3).forEach {
-                        collectedCss.append(it).append("\n")
-                    }
+                if (matchesSet.isEmpty()) {
+                    throw IllegalArgumentException("The add-on has no supported URL match patterns")
                 }
-                if (collectedJs.isBlank()) {
-                    entryMap.filter {
-                        it.key.endsWith(".js", ignoreCase = true) && !it.key.contains("background", ignoreCase = true)
-                    }.values.take(3).forEach {
-                        collectedJs.append(it).append("\n")
-                    }
+                if (collectedCss.isBlank() && collectedJs.isBlank()) {
+                    throw IllegalArgumentException("No supported content script files were found in the XPI")
                 }
 
+                val unsupported = mutableListOf<String>()
+                if (json.has("background")) unsupported.add("background/service worker")
+                if (json.has("action") || json.has("browser_action") || json.has("page_action")) unsupported.add("toolbar popup/action")
+                if (json.has("options_ui") || json.has("options_page")) unsupported.add("extension settings page")
+                val compatibilityNote = "Imported in compatibility mode: content scripts and CSS only. " +
+                    (if (unsupported.isEmpty()) "Browser-extension APIs are not emulated." else
+                        "Unsupported features: ${unsupported.distinct().joinToString()}.")
                 val ext = FirefoxExtensionEntity(
-                    id = "ff_xpi_${UUID.randomUUID().toString().take(8)}",
+                    id = "ff_xpi_${java.util.UUID.randomUUID().toString().take(8)}",
                     name = extName,
                     author = extAuthor,
                     version = extVersion,
-                    description = extDesc,
-                    category = "XPI Add-on",
+                    description = listOf(rawDescription.takeIf { it.isNotBlank() && !it.startsWith("__MSG_") }, compatibilityNote)
+                        .filterNotNull().joinToString("\n\n"),
+                    category = "XPI compatibility import",
                     permissions = extPermissions,
                     isInstalled = true,
                     isEnabled = true,
-                    allowInPrivate = true,
+                    allowInPrivate = false,
                     runAt = extRunAt,
-                    matchPatterns = extMatchPatterns,
+                    matchPatterns = matchesSet.joinToString(", "),
                     amoSlug = fileName.substringBeforeLast("."),
                     cssPayload = collectedCss.toString().trim(),
                     jsPayload = collectedJs.toString().trim()
                 )
                 repository.insertFirefoxExtension(ext)
-                showBanner("Installed '$extName' v$extVersion from XPI")
+                showBanner("Imported '$extName' in content-script compatibility mode")
             } catch (e: Exception) {
-                showBanner("Could not parse XPI file: ${e.localizedMessage ?: "Invalid archive"}")
+                showBanner("Could not import desktop extension: ${e.localizedMessage ?: "invalid or unsupported XPI"}")
+            } finally {
+                runCatching { inputStream.close() }
             }
         }
     }
