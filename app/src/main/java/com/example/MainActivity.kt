@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -30,6 +31,7 @@ import android.util.Rational
 class MainActivity : ComponentActivity() {
 
     private var viewModelRef: ZenBrowserViewModel? = null
+    private var pipWindow by androidx.compose.runtime.mutableStateOf(false)
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     private val database: ZenDatabase by lazy {
@@ -56,7 +58,11 @@ class MainActivity : ComponentActivity() {
                 factory = ZenBrowserViewModel.Factory(repository)
             )
             viewModelRef = browserViewModel
-            val uiState by browserViewModel.uiState.collectAsStateWithLifecycle()
+            // Keep collecting while STOPPED too: in PiP the activity can be stopped, and a lifecycle-gated
+            // collector then freezes on the last pre-PiP state (sidebar open, full layout) inside the tiny window.
+            val uiState by browserViewModel.uiState.collectAsStateWithLifecycle(
+                minActiveState = androidx.lifecycle.Lifecycle.State.CREATED
+            )
 
             val notificationPermissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestPermission()
@@ -120,8 +126,13 @@ class MainActivity : ComponentActivity() {
             ZenBrowserTheme(
                 accentTheme = uiState.activeAccentTheme
             ) {
+                // The window's real PiP state is Compose snapshot state set synchronously from the
+                // Activity callbacks, so the PiP layout can never lag behind the ViewModel flow.
+                val screenState = if (pipWindow && !uiState.isInPictureInPictureMode) {
+                    uiState.copy(isInPictureInPictureMode = true, isSidebarOpen = false)
+                } else uiState
                 ZenBrowserScreen(
-                    uiState = uiState,
+                    uiState = screenState,
                     viewModel = browserViewModel,
                     onEnterPip = { enterPipManual() }
                 )
@@ -176,13 +187,16 @@ class MainActivity : ComponentActivity() {
         val pipEnabled = state.sidebarConfig.playInWindowPipEnabled
         if (canUsePip() && !isInPictureInPictureMode && media.isPlaying && pipEnabled) {
             viewModelRef?.setSidebarOpen(false)
+            pipWindow = true
             viewModelRef?.setPictureInPictureMode(true)
             try {
                 val entered = enterPictureInPictureMode(buildPipParams(autoEnter = true, isPlaying = true))
                 if (!entered && !isInPictureInPictureMode) {
+                    pipWindow = false
                     viewModelRef?.setPictureInPictureMode(false)
                 }
             } catch (_: Exception) {
+                pipWindow = false
                 viewModelRef?.setPictureInPictureMode(false)
             }
         }
@@ -257,17 +271,42 @@ class MainActivity : ComponentActivity() {
         if (!canUsePip() || isInPictureInPictureMode) return false
         val browserViewModel = viewModelRef ?: return false
         browserViewModel.setSidebarOpen(false)
+        pipWindow = true
         browserViewModel.setPictureInPictureMode(true)
         return try {
             val isPlaying = browserViewModel.uiState.value.mediaPlaybackState.isPlaying
             val entered = enterPictureInPictureMode(buildPipParams(autoEnter = false, isPlaying = isPlaying))
             if (!entered && !isInPictureInPictureMode) {
+                pipWindow = false
                 browserViewModel.setPictureInPictureMode(false)
             }
             entered
         } catch (_: Exception) {
+            pipWindow = false
             browserViewModel.setPictureInPictureMode(false)
             false
+        }
+    }
+
+    // Android 12+: fires as the transition starts, before the window shrinks, so the sidebar is
+    // gone from the very first PiP frame instead of showing at half width inside the PiP window.
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.S)
+    override fun onPictureInPictureUiStateChanged(pipState: android.app.PictureInPictureUiState) {
+        super.onPictureInPictureUiStateChanged(pipState)
+        if (pipState.isTransitioningToPip) {
+            pipWindow = true
+            viewModelRef?.setSidebarOpen(false)
+            viewModelRef?.setPictureInPictureMode(true)
+        }
+    }
+
+    // Window resizes are handled here (configChanges); re-sync in case a PiP callback was missed.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (isInPictureInPictureMode != pipWindow) {
+            pipWindow = isInPictureInPictureMode
+            viewModelRef?.setPictureInPictureMode(isInPictureInPictureMode)
+            if (isInPictureInPictureMode) viewModelRef?.setSidebarOpen(false)
         }
     }
 
@@ -276,6 +315,7 @@ class MainActivity : ComponentActivity() {
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipWindow = isInPictureInPictureMode
         viewModelRef?.setPictureInPictureMode(isInPictureInPictureMode)
         if (isInPictureInPictureMode) {
             viewModelRef?.setSidebarOpen(false)
