@@ -128,7 +128,9 @@ class MainActivity : ComponentActivity() {
             ) {
                 // The window's real PiP state is Compose snapshot state set synchronously from the
                 // Activity callbacks, so the PiP layout can never lag behind the ViewModel flow.
-                val screenState = if (pipWindow && !uiState.isInPictureInPictureMode) {
+                val winCfg = androidx.compose.ui.platform.LocalConfiguration.current
+                val tinyWindow = winCfg.screenHeightDp < 260 || winCfg.screenWidthDp < 240
+                val screenState = if ((pipWindow || tinyWindow) && !uiState.isInPictureInPictureMode) {
                     uiState.copy(isInPictureInPictureMode = true, isSidebarOpen = false)
                 } else uiState
                 ZenBrowserScreen(
@@ -303,10 +305,13 @@ class MainActivity : ComponentActivity() {
     // Window resizes are handled here (configChanges); re-sync in case a PiP callback was missed.
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        if (isInPictureInPictureMode != pipWindow) {
-            pipWindow = isInPictureInPictureMode
-            viewModelRef?.setPictureInPictureMode(isInPictureInPictureMode)
-            if (isInPictureInPictureMode) viewModelRef?.setSidebarOpen(false)
+        // One-directional on purpose: during the enter transition the system still reports "not PiP"
+        // while we've already switched layouts. Clearing here made the layout flap and stopped media.
+        // Leaving PiP is handled only by onPictureInPictureModeChanged(false).
+        if (isInPictureInPictureMode && !pipWindow) {
+            pipWindow = true
+            viewModelRef?.setPictureInPictureMode(true)
+            viewModelRef?.setSidebarOpen(false)
         }
     }
 
