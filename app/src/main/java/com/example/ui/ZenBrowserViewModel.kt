@@ -2532,6 +2532,7 @@ class ZenBrowserViewModel(
                 val entryMap = mutableMapOf<String, String>()
                 var entryCount = 0
                 var selectedBytes = 0L
+                var totalArchiveBytes = 0L
                 java.util.zip.ZipInputStream(inputStream).use { zis ->
                     var entry = zis.nextEntry
                     while (entry != null) {
@@ -2545,21 +2546,35 @@ class ZenBrowserViewModel(
                         val shouldRead = !entry.isDirectory && safePath &&
                             (lowerName == "manifest.json" ||
                                 lowerName.endsWith(".js") || lowerName.endsWith(".css"))
-                        if (shouldRead && entryMap.size < 120) {
+                        val buffer = ByteArray(8192)
+                        if (shouldRead && (entryMap.size < 120 || lowerName == "manifest.json")) {
                             val output = java.io.ByteArrayOutputStream()
-                            val buffer = ByteArray(8192)
                             var fileBytes = 0
                             while (true) {
                                 val count = zis.read(buffer)
                                 if (count < 0) break
                                 fileBytes += count
                                 selectedBytes += count
-                                if (fileBytes > 512 * 1024 || selectedBytes > 8L * 1024 * 1024) {
-                                    throw IllegalArgumentException("Extension scripts exceed the import size limit")
+                                totalArchiveBytes += count
+                                if (fileBytes > 512 * 1024 || selectedBytes > 8L * 1024 * 1024 ||
+                                    totalArchiveBytes > 40L * 1024 * 1024
+                                ) {
+                                    throw IllegalArgumentException("Extension archive exceeds the import size limit")
                                 }
                                 output.write(buffer, 0, count)
                             }
                             entryMap[lowerName] = output.toByteArray().toString(Charsets.UTF_8)
+                        } else {
+                            // Count skipped entries too: ZipInputStream.closeEntry() would otherwise
+                            // decompress an unbounded payload from an archive with huge ignored files.
+                            while (true) {
+                                val count = zis.read(buffer)
+                                if (count < 0) break
+                                totalArchiveBytes += count
+                                if (totalArchiveBytes > 40L * 1024 * 1024) {
+                                    throw IllegalArgumentException("Extension archive exceeds the import size limit")
+                                }
+                            }
                         }
                         zis.closeEntry()
                         entry = zis.nextEntry
