@@ -1715,7 +1715,7 @@ fun ZenWebPaneView(
                             if (targetUrl.lowercase().contains(".xpi") || targetUrl.lowercase().contains(".crx") ||
                                 targetUrl.lowercase().endsWith(".user.js") || targetUrl.lowercase().contains(".user.js?")
                             ) {
-                                onInstallExtensionFromAmo(view?.url ?: targetUrl, view?.title)
+                                onInstallExtensionFromAmo(targetUrl, view?.title)
                                 return true
                             }
                             if (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) {
