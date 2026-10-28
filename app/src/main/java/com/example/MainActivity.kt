@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        com.example.privacy.ZenAdBlockList.load(applicationContext)
 
         val initialExternalUrl = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString
 
