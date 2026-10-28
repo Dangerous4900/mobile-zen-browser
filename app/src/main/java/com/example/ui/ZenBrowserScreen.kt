@@ -254,6 +254,7 @@ fun ZenBrowserScreen(
     }
 
     LaunchedEffect(uiState.isInPictureInPictureMode) {
+        val wasPlayingAtSwap = uiState.mediaPlaybackState.isPlaying
         if (uiState.isInPictureInPictureMode) {
             viewModel.setSidebarOpen(false)
         }
@@ -265,6 +266,22 @@ fun ZenBrowserScreen(
         }
         primaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
         secondaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
+
+        // Swapping layouts re-parents the WebView, which can pause the page's media. If it was
+        // playing, resume it (a few times, since the re-attach timing varies by device).
+        if (wasPlayingAtSwap) {
+            repeat(3) {
+                delay(350)
+                val id = uiState.mediaPlaybackState.tabId
+                val target = if (id.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(id) else null
+                if (target != null) {
+                    ZenWebViewController().apply { webView = target }.setMediaPlaying(true)
+                } else {
+                    primaryWebController.setMediaPlaying(true)
+                    secondaryWebController.setMediaPlaying(true)
+                }
+            }
+        }
     }
 
     var showExtensionsMenuPopup by remember { mutableStateOf(false) }
