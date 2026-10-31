@@ -145,6 +145,7 @@ import com.example.data.PasswordEntity
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlin.coroutines.resume
 
 private fun captureWindowBitmap(
     view: android.view.View,
@@ -186,6 +187,14 @@ private fun captureWindowBitmap(
         captureViaViewDraw(view, onCaptured)
     }
 }
+
+/** Suspending capture; null if the window could not be copied within 1.5s. */
+private suspend fun captureWindowBitmapOrNull(view: android.view.View): android.graphics.Bitmap? =
+    kotlinx.coroutines.withTimeoutOrNull(1500L) {
+        kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap> { cont ->
+            captureWindowBitmap(view) { bmp -> if (cont.isActive) cont.resume(bmp) }
+        }
+    }
 
 private fun captureViaViewDraw(
     view: android.view.View,
@@ -464,13 +473,20 @@ fun ZenBrowserScreen(
         // Use the immediate target blur radius when the Side Panel is open so the blur never drops to 0 during animations or recompositions
         val activeSidebarBlurRadius = if (sidebarCfg.glassBlurIntensity > 0.01f) targetBackdropBlur else 0.dp
 
-        // Captured viewport snapshot using PixelCopy to ensure GeckoView hardware SurfaceView is captured
-        var capturedViewportBitmap by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+        // Side panel backdrop. PixelCopy is used (not the Compose layer) so GeckoView's hardware surface is included.
+        //
+        // IMPORTANT: the window is only captured while the side panel is fully closed. Capturing while it is
+        // open (or sliding) copies the panel itself, which then shows up smeared behind the real panel and
+        // compounds on every recapture. The snapshot is frozen while the panel is open.
+        var backdropSnapshot by remember { mutableStateOf<com.example.ui.blur.ZenBackdropSnapshot?>(null) }
         var softwareBlurredBackdrop by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+        val blurEnabled = sidebarCfg.glassBlurIntensity > 0.01f
 
         LaunchedEffect(
+            blurEnabled,
+            sidebarPinnedOpen,
             uiState.isSidebarOpen,
-            sidebarCfg.glassBlurIntensity,
+            uiState.isInPictureInPictureMode,
             uiState.focusedTab?.id,
             uiState.focusedTab?.url,
             uiState.pageLoadingProgress,
@@ -479,31 +495,36 @@ fun ZenBrowserScreen(
             sidebarCfg.startPageImageUri,
             sidebarCfg.startPageBrightness
         ) {
-            if (sidebarCfg.glassBlurIntensity > 0.01f) {
-                val captureFrame = {
-                    captureWindowBitmap(localView) { rawBmp ->
-                        capturedViewportBitmap = rawBmp.asImageBitmap()
-                        val vw = rawBmp.width
-                        val vh = rawBmp.height
-                        val blurScale = (0.24f - sidebarCfg.glassBlurIntensity * 0.16f).coerceIn(0.06f, 0.24f)
-                        val smallW = (vw * blurScale).roundToInt().coerceAtLeast(16)
-                        val smallH = (vh * blurScale).roundToInt().coerceAtLeast(16)
-                        val smallBmp = android.graphics.Bitmap.createScaledBitmap(rawBmp, smallW, smallH, true)
-                        val upBmp = android.graphics.Bitmap.createScaledBitmap(smallBmp, vw, vh, true)
-                        val downBmp = android.graphics.Bitmap.createScaledBitmap(upBmp, smallW, smallH, true)
-                        val finalBmp = android.graphics.Bitmap.createScaledBitmap(downBmp, vw, vh, true)
-                        softwareBlurredBackdrop = finalBmp.asImageBitmap()
-                    }
-                }
-                if (uiState.isSidebarOpen) {
-                    captureFrame()
-                } else {
-                    if (uiState.pageLoadingProgress == 100) {
-                        delay(250)
-                    }
-                    captureFrame()
-                }
+            if (sidebarPinnedOpen) {
+                // A pinned (tablet) panel is part of the layout, so any window capture would contain the panel
+                // itself. It uses the live page layer instead.
+                backdropSnapshot = null
+                return@LaunchedEffect
             }
+            if (!blurEnabled || uiState.isSidebarOpen || uiState.isInPictureInPictureMode) return@LaunchedEffect
+            // Wait for the panel's slide-out to finish (and for the page to settle) before copying the window.
+            // A newer state change cancels this wait, so only the last settled state is captured.
+            delay(if (uiState.pageLoadingProgress in 1..99) 900L else 600L)
+            val full = captureWindowBitmapOrNull(localView) ?: return@LaunchedEffect
+            val snapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                com.example.ui.blur.ZenBackdropBlur.toSnapshot(full).also { if (full !== it.bitmap) full.recycle() }
+            }
+            backdropSnapshot = snapshot
+        }
+
+        // Blur is computed off the main thread, and only this effect reruns when the slider moves
+        // (no new screen capture), so dragging the blur slider is smooth.
+        LaunchedEffect(backdropSnapshot, sidebarCfg.glassBlurIntensity) {
+            val snapshot = backdropSnapshot
+            if (snapshot == null || !blurEnabled) {
+                softwareBlurredBackdrop = null
+                return@LaunchedEffect
+            }
+            val sigmaPx = sidebarCfg.glassBlurIntensity * 36f * density.density
+            val blurred = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                com.example.ui.blur.ZenBackdropBlur.blur(snapshot, sigmaPx)
+            }
+            softwareBlurredBackdrop = blurred.asImageBitmap()
         }
 
         Row(
@@ -569,7 +590,6 @@ fun ZenBrowserScreen(
                     onClearAllHistory = viewModel::clearAllHistory,
                     onDeleteHistoryEntry = viewModel::deleteHistoryEntry,
                     viewportGraphicsLayer = viewportGraphicsLayer,
-                    backdropImageBitmap = capturedViewportBitmap,
                     softwareBlurredBackdrop = softwareBlurredBackdrop
                 )
             }
@@ -1083,7 +1103,6 @@ fun ZenBrowserScreen(
                         }
                     },
                     viewportGraphicsLayer = viewportGraphicsLayer,
-                    backdropImageBitmap = capturedViewportBitmap,
                     softwareBlurredBackdrop = softwareBlurredBackdrop
                 )
             }
@@ -1182,7 +1201,6 @@ fun ZenBrowserScreen(
                         }
                     },
                     viewportGraphicsLayer = viewportGraphicsLayer,
-                    backdropImageBitmap = capturedViewportBitmap,
                     softwareBlurredBackdrop = softwareBlurredBackdrop
                 )
             }

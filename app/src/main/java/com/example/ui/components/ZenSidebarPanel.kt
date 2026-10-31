@@ -111,6 +111,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
@@ -418,20 +421,16 @@ fun ZenSidebarPanel(
             // during slide animations, tab switches, or WebView recompositions.
             if (blurFraction > 0.01f) {
                 val blurPx = with(density) { (blurFraction * 36f).dp.toPx() }.coerceAtLeast(1f)
-                var panelBoundsInRoot by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+                // Panel position in WINDOW coordinates, which is what the captured bitmap is relative to.
+                var panelWindowOffset by remember { mutableStateOf(Offset.Zero) }
+                val windowView = androidx.compose.ui.platform.LocalView.current.rootView
 
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .clipToBounds()
                         .onGloballyPositioned { coords ->
-                            val pos = coords.localToRoot(Offset.Zero)
-                            panelBoundsInRoot = androidx.compose.ui.geometry.Rect(
-                                offset = pos,
-                                size = androidx.compose.ui.geometry.Size(
-                                    coords.size.width.toFloat(),
-                                    coords.size.height.toFloat()
-                                )
-                            )
+                            panelWindowOffset = coords.localToWindow(Offset.Zero)
                         }
                         .graphicsLayer {
                             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && softwareBlurredBackdrop == null) {
@@ -444,30 +443,21 @@ fun ZenSidebarPanel(
                         }
                         .drawWithContent {
                             val activeBmp = softwareBlurredBackdrop ?: backdropImageBitmap
-                            if (activeBmp != null) {
-                                val bmpW = activeBmp.width
-                                val bmpH = activeBmp.height
-                                val srcX = panelBoundsInRoot.left.roundToInt().coerceIn(0, (bmpW - 1).coerceAtLeast(0))
-                                val srcY = panelBoundsInRoot.top.roundToInt().coerceIn(0, (bmpH - 1).coerceAtLeast(0))
-                                val srcW = size.width.roundToInt().coerceIn(1, (bmpW - srcX).coerceAtLeast(1))
-                                val srcH = size.height.roundToInt().coerceIn(1, (bmpH - srcY).coerceAtLeast(1))
-                                drawImage(
-                                    image = activeBmp,
-                                    srcOffset = androidx.compose.ui.unit.IntOffset(srcX, srcY),
-                                    srcSize = androidx.compose.ui.unit.IntSize(srcW, srcH),
-                                    dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
-                                    dstSize = androidx.compose.ui.unit.IntSize(
-                                        size.width.roundToInt().coerceAtLeast(1),
-                                        size.height.roundToInt().coerceAtLeast(1)
+                            if (activeBmp != null && windowView.width > 0 && windowView.height > 0) {
+                                // Draw the whole window snapshot, shifted so the part behind this panel lines up.
+                                // Unlike cropping a source rectangle this stays exact while the panel is sliding
+                                // in/out partly off-screen (the old crop clamped and stretched the image).
+                                translate(left = -panelWindowOffset.x, top = -panelWindowOffset.y) {
+                                    drawImage(
+                                        image = activeBmp,
+                                        dstSize = androidx.compose.ui.unit.IntSize(windowView.width, windowView.height),
+                                        filterQuality = FilterQuality.Low
                                     )
-                                )
+                                }
                             } else if (viewportGraphicsLayer != null) {
-                                val offsetX = -panelBoundsInRoot.left
-                                val offsetY = -panelBoundsInRoot.top
-                                drawContext.canvas.save()
-                                drawContext.canvas.translate(offsetX, offsetY)
-                                drawLayer(viewportGraphicsLayer)
-                                drawContext.canvas.restore()
+                                translate(left = -panelWindowOffset.x, top = -panelWindowOffset.y) {
+                                    drawLayer(viewportGraphicsLayer)
+                                }
                             }
                         }
                 )
