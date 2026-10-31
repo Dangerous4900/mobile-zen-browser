@@ -196,6 +196,65 @@ private suspend fun captureWindowBitmapOrNull(view: android.view.View): android.
         }
     }
 
+private fun collectSurfaceViews(root: android.view.View, out: MutableList<android.view.SurfaceView>) {
+    if (root.visibility != android.view.View.VISIBLE) return
+    if (root is android.view.SurfaceView) {
+        out.add(root)
+        return
+    }
+    if (root is android.view.ViewGroup) {
+        for (i in 0 until root.childCount) collectSurfaceViews(root.getChildAt(i), out)
+    }
+}
+
+private suspend fun copySurfaceViewOrNull(sv: android.view.SurfaceView): android.graphics.Bitmap? =
+    kotlinx.coroutines.withTimeoutOrNull(1500L) {
+        kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
+            val bmp = android.graphics.Bitmap.createBitmap(sv.width, sv.height, android.graphics.Bitmap.Config.ARGB_8888)
+            try {
+                android.view.PixelCopy.request(
+                    sv,
+                    bmp,
+                    { result -> if (cont.isActive) cont.resume(if (result == android.view.PixelCopy.SUCCESS) bmp else null) },
+                    android.os.Handler(android.os.Looper.getMainLooper())
+                )
+            } catch (_: Throwable) {
+                if (cont.isActive) cont.resume(null)
+            }
+        }
+    }
+
+/**
+ * Window capture that includes SurfaceViews.
+ *
+ * A window PixelCopy only contains the window's own buffer. GeckoView (and video players) render into a separate
+ * SurfaceView, which shows up there as a transparent hole, so a blurred backdrop built from it was empty on every
+ * real website (only Compose-drawn screens like the home page worked). Each visible SurfaceView is copied on its
+ * own and drawn underneath the window copy, which is where SurfaceFlinger composites it on screen.
+ */
+private suspend fun captureWindowWithSurfacesOrNull(view: android.view.View): android.graphics.Bitmap? {
+    val windowBmp = captureWindowBitmapOrNull(view) ?: return null
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return windowBmp
+    val surfaces = ArrayList<android.view.SurfaceView>().also { collectSurfaceViews(view.rootView, it) }
+        .filter { it.width > 0 && it.height > 0 && it.isShown && it.holder.surface.isValid }
+    if (surfaces.isEmpty()) return windowBmp
+
+    val result = android.graphics.Bitmap.createBitmap(windowBmp.width, windowBmp.height, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(result)
+    // Opaque base: anything we could not copy shows as dark panel instead of a see-through hole.
+    canvas.drawColor(android.graphics.Color.BLACK)
+    val loc = IntArray(2)
+    for (sv in surfaces) {
+        val surfaceBmp = copySurfaceViewOrNull(sv) ?: continue
+        sv.getLocationInWindow(loc)
+        canvas.drawBitmap(surfaceBmp, loc[0].toFloat(), loc[1].toFloat(), null)
+        surfaceBmp.recycle()
+    }
+    canvas.drawBitmap(windowBmp, 0f, 0f, null)
+    windowBmp.recycle()
+    return result
+}
+
 private fun captureViaViewDraw(
     view: android.view.View,
     onCaptured: (android.graphics.Bitmap) -> Unit
@@ -505,7 +564,7 @@ fun ZenBrowserScreen(
             // Wait for the panel's slide-out to finish (and for the page to settle) before copying the window.
             // A newer state change cancels this wait, so only the last settled state is captured.
             delay(if (uiState.pageLoadingProgress in 1..99) 900L else 600L)
-            val full = captureWindowBitmapOrNull(localView) ?: return@LaunchedEffect
+            val full = captureWindowWithSurfacesOrNull(localView) ?: return@LaunchedEffect
             val snapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 com.example.ui.blur.ZenBackdropBlur.toSnapshot(full).also { if (full !== it.bitmap) full.recycle() }
             }
