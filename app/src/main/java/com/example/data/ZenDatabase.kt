@@ -185,7 +185,7 @@ interface ZenDao {
         OfflinePageEntity::class,
         PasswordEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class ZenDatabase : RoomDatabase() {

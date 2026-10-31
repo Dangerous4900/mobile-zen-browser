@@ -90,7 +90,31 @@ data class DownloadItemEntity(
     val mimeType: String = "",
     val timestamp: Long = System.currentTimeMillis(),
     val totalBytes: Long = 0L,
-    val status: String = "completed"
+    val status: String = "completed",
+    val downloadedBytes: Long = 0L,
+    val speedBytesPerSec: Long = 0L,
+    val etaSeconds: Long = 0L,
+    val totalSegments: Int = 501,
+    val completedSegments: Int = 0,
+    val isResumable: Boolean = true,
+    val isWifiOnly: Boolean = false,
+    val speedLimitKbps: Long = 0L,
+    val sourceDomain: String = "",
+    val avgSpeedMbps: Float = 4.4f,
+    val peakSpeedMbps: Float = 15.3f
+)
+
+data class DetectedMediaStream(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val resolution: String,
+    val isBest: Boolean = false,
+    val format: String = "HLS",
+    val bitrate: String = "5.4 Mbps",
+    val duration: String = "41m 43s",
+    val segmentsCount: Int = 501,
+    val estimatedSize: String = "1.6 GB",
+    val url: String = "",
+    val mimeType: String = "video/mp4"
 )
 
 @Entity(tableName = "passwords")
@@ -171,6 +195,8 @@ enum class SidebarToolItem(val id: String, val label: String) {
     MEDIA_BAR("media_bar", "Media Playback Bar"),
     SPLIT_VIEW("split_view", "Split View Button"),
     FIREFOX_EXTENSIONS("firefox_extensions", "Firefox Add-ons Button"),
+    MEDIA_CAPTURE("media_capture", "Media Capture & Sniffer"),
+    DOWNLOAD_MANAGER("download_manager", "Advance Download Manager (ADM)"),
     READER_MODE("reader_mode", "Reader Mode Button"),
     PRIVACY_SHIELD("privacy_shield", "Privacy Shield Button"),
     COMPACT_MODE("compact_mode", "Compact Mode Button"),
@@ -296,7 +322,9 @@ data class MediaPlaybackState(
     val isMuted: Boolean = false,
     val title: String = "",
     val domain: String = "",
-    val tabId: String = ""
+    val tabId: String = "",
+    val artworkUrl: String = "",
+    val artwork: android.graphics.Bitmap? = null
 )
 
 data class SidebarConfig(

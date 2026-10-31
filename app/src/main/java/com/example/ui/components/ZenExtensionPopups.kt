@@ -650,52 +650,37 @@ private fun AuthenticUblockOriginDialogContent(
 
     Surface(
         modifier = Modifier
-            .width(260.dp)
+            .widthIn(min = 300.dp, max = 380.dp)
+            .fillMaxWidth(0.92f)
             .clickable(enabled = false) {}
-            .shadow(28.dp, RoundedCornerShape(12.dp))
+            .shadow(32.dp, RoundedCornerShape(24.dp))
             .testTag("authentic_ublock_origin_popup"),
-        shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF1E222D),
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xFF161820),
         border = BorderStroke(1.dp, Color(0xFF2C3242))
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header: Domain banner with back/close options
+            // Header Bar: "uBlock Origin" and Close (X) button
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFF2B3141)
+                color = Color(0xFF1E222D)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    IconButton(
-                        onClick = onBackToMenu,
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-
                     Text(
-                        text = cleanDomain,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFE4E4E7),
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+                        text = "uBlock Origin",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFF4F4F6),
+                        fontSize = 15.sp
                     )
 
                     IconButton(
@@ -706,141 +691,173 @@ private fun AuthenticUblockOriginDialogContent(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",
                             tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            // Domain subtitle bar
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xFF1B1E28)
+            ) {
+                Text(
+                    text = cleanDomain,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF93C5FD),
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                )
+            }
 
-            // Giant Circular Blue Power Button (exact look from screenshot)
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Giant Circular Glowing Power Button (exact look from Screen 2)
             Box(
                 modifier = Modifier
-                    .size(80.dp)
+                    .size(86.dp)
                     .clip(CircleShape)
-                    .background(if (isEnabled) Color(0xFF1C2740) else Color(0xFF242730))
+                    .background(if (isEnabled) Color(0xFF1E3A8A) else Color(0xFF242730))
                     .clickable { onTogglePower() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.PowerSettingsNew,
                     contentDescription = if (isEnabled) "uBlock ON" else "uBlock OFF",
-                    tint = if (isEnabled) Color(0xFF3B82F6) else Color(0xFF6B7280),
-                    modifier = Modifier.size(54.dp)
+                    tint = if (isEnabled) Color(0xFF60A5FA) else Color(0xFF6B7280),
+                    modifier = Modifier.size(56.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // 5 Tools Action Strip (Picker, Zapper, Eye, Fonts, JS)
+            // 4 Quick Action Tools with icons and descriptive labels (Screen 2)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFF242836)
+                color = Color(0xFF1B1E28)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                        .padding(horizontal = 6.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
-                    // 1. Element Picker tool
-                    IconButton(
-                        onClick = onLaunchElementPicker,
-                        modifier = Modifier.size(34.dp)
+                    // 1. Large media elements
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { cosmeticFilterActive = !cosmeticFilterActive }
+                            .padding(4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Layers,
-                            contentDescription = "Element Picker",
-                            tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(18.dp)
+                            contentDescription = "Large media elements",
+                            tint = if (cosmeticFilterActive) Color(0xFFD4D4D8) else Color(0xFF6B7280),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Large media\nelements",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFA1A1AA),
+                            fontSize = 9.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
 
-                    // 2. Element Zapper tool
-                    IconButton(
-                        onClick = {
-                            onRunScript(
-                                """
-                                (function() {
-                                    var z = document.createElement('div');
-                                    z.style = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#EF4444;color:white;padding:6px 14px;border-radius:16px;font-size:12px;z-index:9999999;';
-                                    z.textContent = '⚡ uBlock Zapper: Click any element to remove';
-                                    document.body.appendChild(z);
-                                    var zapClick = function(e) {
-                                        e.preventDefault(); e.stopPropagation();
-                                        e.target.remove(); z.remove();
-                                        document.removeEventListener('click', zapClick, true);
-                                    };
-                                    document.addEventListener('click', zapClick, true);
-                                })();
-                                """.trimIndent()
-                            )
-                        },
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FlashOn,
-                            contentDescription = "Element Zapper",
-                            tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    // 3. Cosmetic filtering
-                    IconButton(
-                        onClick = { cosmeticFilterActive = !cosmeticFilterActive },
-                        modifier = Modifier.size(34.dp)
+                    // 2. Cosmetic filtering
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { cosmeticFilterActive = !cosmeticFilterActive }
+                            .padding(4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = "Cosmetic Filtering",
+                            contentDescription = "Cosmetic filtering",
                             tint = if (cosmeticFilterActive) Color(0xFFD4D4D8) else Color(0xFF6B7280),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Cosmetic\nfiltering",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFA1A1AA),
+                            fontSize = 9.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
 
-                    // 4. Remote Fonts
-                    IconButton(
-                        onClick = { remoteFontsBlocked = !remoteFontsBlocked },
-                        modifier = Modifier.size(34.dp)
+                    // 3. Remote fonts
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { remoteFontsBlocked = !remoteFontsBlocked }
+                            .padding(4.dp)
                     ) {
                         Text(
-                            text = "Aa¹",
+                            text = "Aa",
                             fontWeight = FontWeight.Bold,
                             color = if (remoteFontsBlocked) Color(0xFFEF4444) else Color(0xFFD4D4D8),
-                            fontSize = 13.sp
+                            fontSize = 16.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Remote\nfonts",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFA1A1AA),
+                            fontSize = 9.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
 
-                    // 5. JavaScript toggle
-                    IconButton(
-                        onClick = { jsDisabled = !jsDisabled },
-                        modifier = Modifier.size(34.dp)
+                    // 4. JavaScript toggle
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { jsDisabled = !jsDisabled }
+                            .padding(4.dp)
                     ) {
                         Text(
-                            text = "</>⁹",
+                            text = "</>²⁹",
                             fontWeight = FontWeight.Bold,
                             color = if (jsDisabled) Color(0xFFEF4444) else Color(0xFFD4D4D8),
-                            fontSize = 13.sp
+                            fontSize = 14.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "JavaScript",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFA1A1AA),
+                            fontSize = 9.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Blocked Statistics (Exact layout from Image 2)
+            // 2-Column Statistics Table (Exact layout from Screen 2)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Blocked on this page
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         text = "Blocked on this page",
                         style = MaterialTheme.typography.bodySmall,
@@ -848,16 +865,19 @@ private fun AuthenticUblockOriginDialogContent(
                         fontSize = 12.sp
                     )
                     Text(
-                        text = if (isEnabled) "14 (13%)" else "0 (0%)",
-                        style = MaterialTheme.typography.titleMedium,
+                        text = if (isEnabled) "48 (82%)" else "0 (0%)",
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFFF4F4F6),
-                        fontSize = 15.sp
+                        fontSize = 13.sp
                     )
                 }
 
-                // Domains connected
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         text = "Domains connected",
                         style = MaterialTheme.typography.bodySmall,
@@ -865,16 +885,19 @@ private fun AuthenticUblockOriginDialogContent(
                         fontSize = 12.sp
                     )
                     Text(
-                        text = "5 out of 8",
-                        style = MaterialTheme.typography.titleMedium,
+                        text = "1 out of 10",
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFFF4F4F6),
-                        fontSize = 15.sp
+                        fontSize = 13.sp
                     )
                 }
 
-                // Blocked since install
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         text = "Blocked since install",
                         style = MaterialTheme.typography.bodySmall,
@@ -882,98 +905,103 @@ private fun AuthenticUblockOriginDialogContent(
                         fontSize = 12.sp
                     )
                     Text(
-                        text = "2,031 (5%)",
-                        style = MaterialTheme.typography.titleMedium,
+                        text = "1,500 (8%)",
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFFF4F4F6),
-                        fontSize = 15.sp
+                        fontSize = 13.sp
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // Bottom Tools Row (Lightning, Pipette, Chat, Logger, Settings)
+            // 4 Bottom Action Tools (Zapper, Picker, Report, Dashboard) with 2-line labels (Screen 2)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFF242836)
+                color = Color(0xFF1B1E28)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                        .padding(horizontal = 4.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
-                    IconButton(
-                        onClick = onLaunchElementPicker,
-                        modifier = Modifier.size(34.dp)
+                    // Zap
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable {
+                                onRunScript(
+                                    """
+                                    (function() {
+                                        var z = document.createElement('div');
+                                        z.style = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#EF4444;color:white;padding:6px 14px;border-radius:16px;font-size:12px;z-index:9999999;';
+                                        z.textContent = '⚡ uBlock Zapper: Click any element to remove';
+                                        document.body.appendChild(z);
+                                        var zapClick = function(e) {
+                                            e.preventDefault(); e.stopPropagation();
+                                            e.target.remove(); z.remove();
+                                            document.removeEventListener('click', zapClick, true);
+                                        };
+                                        document.addEventListener('click', zapClick, true);
+                                    })();
+                                    """.trimIndent()
+                                )
+                            }
+                            .padding(2.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.FlashOn,
-                            contentDescription = "Zap",
-                            tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(17.dp)
-                        )
+                        Icon(imageVector = Icons.Default.FlashOn, contentDescription = null, tint = Color(0xFFD4D4D8), modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text("Enter element\nzapper mode", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA1A1AA), fontSize = 8.sp, textAlign = TextAlign.Center)
                     }
 
-                    IconButton(
-                        onClick = onLaunchElementPicker,
-                        modifier = Modifier.size(34.dp)
+                    // Pipette
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { onLaunchElementPicker() }
+                            .padding(2.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Tune,
-                            contentDescription = "Pipette",
-                            tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(17.dp)
-                        )
+                        Icon(imageVector = Icons.Default.Tune, contentDescription = null, tint = Color(0xFFD4D4D8), modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text("Enter element\npicker mode", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA1A1AA), fontSize = 8.sp, textAlign = TextAlign.Center)
                     }
 
-                    IconButton(
-                        onClick = onReloadTab,
-                        modifier = Modifier.size(34.dp)
+                    // Report
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { onReloadTab() }
+                            .padding(2.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.ChatBubbleOutline,
-                            contentDescription = "Report issue",
-                            tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(17.dp)
-                        )
+                        Icon(imageVector = Icons.Default.ChatBubbleOutline, contentDescription = null, tint = Color(0xFFD4D4D8), modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text("Report an issue\non this website", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA1A1AA), fontSize = 8.sp, textAlign = TextAlign.Center)
                     }
 
-                    IconButton(
-                        onClick = onReloadTab,
-                        modifier = Modifier.size(34.dp)
+                    // Dashboard
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable {
+                                onClose()
+                                onOpenSettings()
+                            }
+                            .padding(2.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.ListAlt,
-                            contentDescription = "Logger",
-                            tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = {
-                            onClose()
-                            onOpenSettings()
-                        },
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Dashboard",
-                            tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(17.dp)
-                        )
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = null, tint = Color(0xFFD4D4D8), modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text("Open the\ndashboard", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA1A1AA), fontSize = 8.sp, textAlign = TextAlign.Center)
                     }
                 }
             }
 
-            // Bottom Accordion Bar: "More ⌄" and "Less ⌃"
+            // Accordion Toggle: "More ⌄ / Less ⌃"
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFF1B1E28)
+                color = Color(0xFF141720)
             ) {
                 Row(
                     modifier = Modifier
@@ -989,7 +1017,8 @@ private fun AuthenticUblockOriginDialogContent(
                         Text(
                             text = "More",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFA1A1AA)
+                            color = Color(0xFFA1A1AA),
+                            fontSize = 11.sp
                         )
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowDown,
@@ -1012,35 +1041,61 @@ private fun AuthenticUblockOriginDialogContent(
                         Text(
                             text = "Less",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFA1A1AA)
+                            color = Color(0xFFA1A1AA),
+                            fontSize = 11.sp
                         )
                     }
                 }
             }
 
-            // Optional "More" expanded details
+            // Expanded Rules / Filter Logger Section (Screen 2)
             AnimatedVisibility(visible = showMoreSection) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF1A1D27))
-                        .padding(10.dp),
+                        .background(Color(0xFF141720))
+                        .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = "Static Filter Rules: 312,410 active",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF93C5FD)
-                    )
-                    OutlinedButton(
-                        onClick = onReloadTab,
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(1.dp, Color(0xFF3B82F6))
-                    ) {
-                        Text("Reload Page with Updated Rules", fontSize = 11.sp, color = Color(0xFF93C5FD))
+                    // Mock logger entries matching Screen 2
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(width = 4.dp, height = 12.dp).background(Color(0xFFEF4444)))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("adblock-tester.com", style = MaterialTheme.typography.labelSmall, color = Color(0xFFD4D4D8), fontSize = 11.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(width = 4.dp, height = 12.dp).background(Color(0xFF10B981)))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("...cloudflareinsights.com", style = MaterialTheme.typography.labelSmall, color = Color(0xFF9CA3AF), fontSize = 11.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Block visibility: ", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA1A1AA), fontSize = 11.sp)
+                        Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text("test passed", style = MaterialTheme.typography.labelSmall, color = Color(0xFF10B981), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
+            }
+
+            // Bottom Green Score Banner: "100 points out of 100 (11 services, 22 checks)" (Screen 2)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xFF15803D)
+            ) {
+                Text(
+                    text = "100 points out of 100 (11 services, 22 checks)",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                )
             }
         }
     }
@@ -1066,10 +1121,11 @@ private fun AuthenticDarkReaderDialogContent(
 
     Surface(
         modifier = Modifier
-            .width(280.dp)
+            .widthIn(min = 300.dp, max = 380.dp)
+            .fillMaxWidth(0.92f)
             .clickable(enabled = false) {}
-            .shadow(28.dp, RoundedCornerShape(14.dp)),
-        shape = RoundedCornerShape(14.dp),
+            .shadow(28.dp, RoundedCornerShape(24.dp)),
+        shape = RoundedCornerShape(24.dp),
         color = Color(0xFF1C1C22),
         border = BorderStroke(1.dp, Color(0xFF2E2E38))
     ) {
@@ -1171,11 +1227,12 @@ private fun AuthenticPrivacyBadgerDialogContent(
 
     Surface(
         modifier = Modifier
-            .width(280.dp)
+            .widthIn(min = 300.dp, max = 380.dp)
+            .fillMaxWidth(0.92f)
             .clickable(enabled = false) {}
-            .shadow(28.dp, RoundedCornerShape(14.dp))
+            .shadow(28.dp, RoundedCornerShape(24.dp))
             .testTag("privacy_badger_popup"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(24.dp),
         color = Color(0xFF1E1E24),
         border = BorderStroke(1.dp, Color(0xFF32323D))
     ) {
@@ -1370,11 +1427,12 @@ private fun AuthenticSponsorBlockDialogContent(
 
     Surface(
         modifier = Modifier
-            .width(280.dp)
+            .widthIn(min = 300.dp, max = 380.dp)
+            .fillMaxWidth(0.92f)
             .clickable(enabled = false) {}
-            .shadow(28.dp, RoundedCornerShape(14.dp))
+            .shadow(28.dp, RoundedCornerShape(24.dp))
             .testTag("sponsorblock_popup"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(24.dp),
         color = Color(0xFF1C2220),
         border = BorderStroke(1.dp, Color(0xFF2B3A34))
     ) {
@@ -1495,11 +1553,12 @@ private fun AuthenticBitwardenDialogContent(
 
     Surface(
         modifier = Modifier
-            .width(280.dp)
+            .widthIn(min = 300.dp, max = 380.dp)
+            .fillMaxWidth(0.92f)
             .clickable(enabled = false) {}
-            .shadow(28.dp, RoundedCornerShape(14.dp))
+            .shadow(28.dp, RoundedCornerShape(24.dp))
             .testTag("bitwarden_popup"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(24.dp),
         color = Color(0xFF171B26),
         border = BorderStroke(1.dp, Color(0xFF283248))
     ) {
@@ -1625,11 +1684,12 @@ private fun AuthenticViolentmonkeyDialogContent(
 
     Surface(
         modifier = Modifier
-            .width(280.dp)
+            .widthIn(min = 300.dp, max = 380.dp)
+            .fillMaxWidth(0.92f)
             .clickable(enabled = false) {}
-            .shadow(28.dp, RoundedCornerShape(14.dp))
+            .shadow(28.dp, RoundedCornerShape(24.dp))
             .testTag("violentmonkey_popup"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(24.dp),
         color = Color(0xFF172024),
         border = BorderStroke(1.dp, Color(0xFF23363E))
     ) {
@@ -1731,11 +1791,12 @@ private fun AuthenticReturnDislikeDialogContent(
 ) {
     Surface(
         modifier = Modifier
-            .width(280.dp)
+            .widthIn(min = 300.dp, max = 380.dp)
+            .fillMaxWidth(0.92f)
             .clickable(enabled = false) {}
-            .shadow(28.dp, RoundedCornerShape(14.dp))
+            .shadow(28.dp, RoundedCornerShape(24.dp))
             .testTag("return_dislike_popup"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(24.dp),
         color = Color(0xFF241C1E),
         border = BorderStroke(1.dp, Color(0xFF3D2A2E))
     ) {
@@ -1813,10 +1874,11 @@ private fun AuthenticGeneralExtensionDialogContent(
 ) {
     Surface(
         modifier = Modifier
-            .width(280.dp)
+            .widthIn(min = 300.dp, max = 380.dp)
+            .fillMaxWidth(0.92f)
             .clickable(enabled = false) {}
-            .shadow(28.dp, RoundedCornerShape(14.dp)),
-        shape = RoundedCornerShape(14.dp),
+            .shadow(28.dp, RoundedCornerShape(24.dp)),
+        shape = RoundedCornerShape(24.dp),
         color = Color(0xFF1C1C22),
         border = BorderStroke(1.dp, Color(0xFF2E2E38))
     ) {

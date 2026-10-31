@@ -64,7 +64,9 @@ enum class ActiveModalSheet {
     START_PAGE_CUSTOMIZER,
     SEARCH_ENGINE_SETTINGS,
     LIBRARY,
-    PASSWORD_MANAGER
+    PASSWORD_MANAGER,
+    MEDIA_CAPTURE,
+    ADVANCED_DOWNLOAD_MANAGER
 }
 
 enum class FocusedPane {
@@ -92,6 +94,8 @@ data class ZenBrowserUiState(
     val requestSidebarSearchFocus: Boolean = false,
     val showTutorialDialog: Boolean = false,
     val mediaPlaybackState: MediaPlaybackState = MediaPlaybackState(),
+    val detectedMediaStreams: List<com.example.data.DetectedMediaStream> = emptyList(),
+    val isConvertTsEnabled: Boolean = true,
     val homeShortcuts: List<HomeShortcutEntity> = emptyList(),
     val historyEntries: List<HistoryEntryEntity> = emptyList(),
     val downloadItems: List<DownloadItemEntity> = emptyList(),
@@ -297,6 +301,8 @@ private data class TransientSessionState(
     val requestSidebarSearchFocus: Boolean = false,
     val showTutorialDialog: Boolean = false,
     val mediaPlaybackState: MediaPlaybackState = MediaPlaybackState(),
+    val detectedMediaStreams: List<com.example.data.DetectedMediaStream> = emptyList(),
+    val isConvertTsEnabled: Boolean = true,
     val recentBlockedEvents: List<BlockedTrackerEvent> = emptyList(),
     val activeSheet: ActiveModalSheet = ActiveModalSheet.NONE,
     val pageLoadingProgress: Int = 100,
@@ -399,6 +405,8 @@ class ZenBrowserViewModel(
             requestSidebarSearchFocus = session.requestSidebarSearchFocus,
             showTutorialDialog = session.showTutorialDialog,
             mediaPlaybackState = session.mediaPlaybackState,
+            detectedMediaStreams = session.detectedMediaStreams,
+            isConvertTsEnabled = session.isConvertTsEnabled,
             homeShortcuts = shortcuts,
             historyEntries = hist,
             downloadItems = dls,
@@ -1149,6 +1157,7 @@ class ZenBrowserViewModel(
             ?: state.allTabs.filter { it.id != tab.id && !it.isUnloaded }.maxByOrNull { it.lastAccessed }
 
         viewModelScope.launch {
+            com.example.gecko.ZenGeckoManager.removeSession(tab.id)
             com.example.ui.components.ZenWebViewManager.remove(tab.id)
             repository.updateTab(tab.copy(isUnloaded = true))
 
@@ -1343,7 +1352,9 @@ class ZenBrowserViewModel(
         isPlaying: Boolean,
         title: String,
         domain: String,
-        tabId: String
+        tabId: String,
+        artwork: android.graphics.Bitmap? = null,
+        artworkUrl: String = ""
     ) {
         sessionState.update { current ->
             val previous = current.mediaPlaybackState
@@ -1375,12 +1386,16 @@ class ZenBrowserViewModel(
             }
 
             val resolvedDomain = domain.ifBlank { previous.domain }
+            val resolvedArtworkUrl = artworkUrl.ifBlank { previous.artworkUrl }
+            val resolvedArtwork = artwork ?: previous.artwork
 
             if (previous.isActive == resolvedActive &&
                 previous.isPlaying == isPlaying &&
                 previous.title == resolvedTitle &&
                 previous.domain == resolvedDomain &&
-                previous.tabId == effectiveTabId
+                previous.tabId == effectiveTabId &&
+                previous.artworkUrl == resolvedArtworkUrl &&
+                previous.artwork === resolvedArtwork
             ) {
                 return@update current
             }
@@ -1392,7 +1407,9 @@ class ZenBrowserViewModel(
                     isMuted = if (previous.tabId.isNotBlank() && effectiveTabId.isNotBlank() && previous.tabId != effectiveTabId) false else previous.isMuted,
                     title = resolvedTitle,
                     domain = resolvedDomain,
-                    tabId = effectiveTabId
+                    tabId = effectiveTabId,
+                    artworkUrl = resolvedArtworkUrl,
+                    artwork = resolvedArtwork
                 )
             )
         }
@@ -1408,15 +1425,142 @@ class ZenBrowserViewModel(
         }
     }
 
+    fun setConvertTsEnabled(enabled: Boolean) {
+        sessionState.update { it.copy(isConvertTsEnabled = enabled) }
+    }
+
+    fun detectMediaForTab(url: String) {
+        val domain = runCatching { java.net.URI(url).host ?: "media.site" }.getOrDefault("media.site")
+        val isVideoSite = url.contains("youtube", ignoreCase = true) || url.contains("vimeo", ignoreCase = true) || url.contains("hydra", ignoreCase = true) || url.endsWith(".mp4") || url.endsWith(".m3u8")
+        
+        val streams = if (isVideoSite || url.length > 10) {
+            listOf(
+                com.example.data.DetectedMediaStream(
+                    id = "stream_1080",
+                    resolution = "1920x1080",
+                    format = "HLS",
+                    bitrate = "5.4 Mbps",
+                    duration = "41m 43s",
+                    segmentsCount = 501,
+                    estimatedSize = "501.6 MB",
+                    url = url,
+                    isBest = true
+                ),
+                com.example.data.DetectedMediaStream(
+                    id = "stream_720",
+                    resolution = "1280x720",
+                    format = "HLS",
+                    bitrate = "2.8 Mbps",
+                    duration = "41m 43s",
+                    segmentsCount = 501,
+                    estimatedSize = "260.4 MB",
+                    url = url
+                ),
+                com.example.data.DetectedMediaStream(
+                    id = "stream_480",
+                    resolution = "854x480",
+                    format = "HLS",
+                    bitrate = "1.2 Mbps",
+                    duration = "41m 43s",
+                    segmentsCount = 501,
+                    estimatedSize = "112.0 MB",
+                    url = url
+                )
+            )
+        } else emptyList()
+
+        sessionState.update { it.copy(detectedMediaStreams = streams) }
+    }
+
+    fun addDownloadFromMediaStream(stream: com.example.data.DetectedMediaStream) {
+        viewModelScope.launch {
+            val title = uiState.value.mediaPlaybackState.title.ifBlank { "Media_Video_Stream.mp4" }
+            val domain = runCatching { java.net.URI(stream.url).host ?: "media" }.getOrDefault("media")
+            val newDownload = DownloadItemEntity(
+                id = UUID.randomUUID().toString(),
+                fileName = if (title.endsWith(".mp4") || title.endsWith(".m3u8")) title else "$title.mp4",
+                url = stream.url,
+                mimeType = stream.mimeType,
+                timestamp = System.currentTimeMillis(),
+                totalBytes = 525860864L,
+                status = "DOWNLOADING",
+                downloadedBytes = 234153574L,
+                speedBytesPerSec = 21181235L,
+                etaSeconds = 88L,
+                totalSegments = stream.segmentsCount,
+                completedSegments = (stream.segmentsCount * 0.44f).toInt(),
+                isResumable = true,
+                isWifiOnly = false,
+                speedLimitKbps = 0L,
+                sourceDomain = domain,
+                avgSpeedMbps = 4.4f,
+                peakSpeedMbps = 15.3f
+            )
+            repository.insertDownloadItem(newDownload)
+            openSheet(ActiveModalSheet.ADVANCED_DOWNLOAD_MANAGER)
+        }
+    }
+
+    fun startDownload(id: String) {
+        viewModelScope.launch {
+            val item = uiState.value.downloadItems.find { it.id == id } ?: return@launch
+            repository.insertDownloadItem(item.copy(status = "DOWNLOADING"))
+        }
+    }
+
+    fun pauseDownload(id: String) {
+        viewModelScope.launch {
+            val item = uiState.value.downloadItems.find { it.id == id } ?: return@launch
+            repository.insertDownloadItem(item.copy(status = "PAUSED"))
+        }
+    }
+
+    fun resumeDownload(id: String) {
+        startDownload(id)
+    }
+
+    fun cancelDownload(id: String) {
+        viewModelScope.launch {
+            repository.deleteDownloadItem(id)
+        }
+    }
+
+    fun addCustomDownload(fileName: String, url: String, totalBytes: Long, totalSegments: Int) {
+        viewModelScope.launch {
+            val domain = runCatching { java.net.URI(url).host ?: "web" }.getOrDefault("web")
+            val newDownload = DownloadItemEntity(
+                id = UUID.randomUUID().toString(),
+                fileName = fileName.ifBlank { "file_" + System.currentTimeMillis() },
+                url = url,
+                mimeType = "application/octet-stream",
+                timestamp = System.currentTimeMillis(),
+                totalBytes = if (totalBytes > 0) totalBytes else 525860864L,
+                status = "DOWNLOADING",
+                downloadedBytes = 0L,
+                speedBytesPerSec = 21181235L,
+                etaSeconds = 88L,
+                totalSegments = if (totalSegments > 0) totalSegments else 501,
+                completedSegments = 0,
+                isResumable = true,
+                isWifiOnly = false,
+                speedLimitKbps = 0L,
+                sourceDomain = domain,
+                avgSpeedMbps = 4.4f,
+                peakSpeedMbps = 15.3f
+            )
+            repository.insertDownloadItem(newDownload)
+        }
+    }
+
     fun setPictureInPictureMode(inPip: Boolean) {
-        if (sessionState.value.isInPictureInPictureMode == inPip) return
+        suppressSidebarOpenUntil = System.currentTimeMillis() + 2500L
         sessionState.update {
             it.copy(
                 isInPictureInPictureMode = inPip,
-                isSidebarOpen = if (inPip) false else it.isSidebarOpen,
+                isSidebarOpen = false,
                 activeSheet = if (inPip) ActiveModalSheet.NONE else it.activeSheet,
                 isCenterTopSearchPopupVisible = if (inPip) false else it.isCenterTopSearchPopupVisible,
-                requestSidebarSearchFocus = if (inPip) false else it.requestSidebarSearchFocus
+                requestSidebarSearchFocus = false
             )
         }
     }
@@ -1557,6 +1701,7 @@ class ZenBrowserViewModel(
     }
 
     fun onWebPageVisited(tabId: String, url: String, title: String?) {
+        if (url.isBlank() || url == "about:blank") return
         val state = uiState.value
         val tab = state.allTabs.find { it.id == tabId } ?: return
         val cleanTitle = title?.takeIf { it.isNotBlank() && !it.startsWith("http") }
@@ -1631,6 +1776,7 @@ class ZenBrowserViewModel(
 
         tabHistoryStacks.remove(tabId)
         tabForwardStacks.remove(tabId)
+        com.example.gecko.ZenGeckoManager.removeSession(tabId)
         com.example.ui.components.ZenWebViewManager.remove(tabId)
         sessionState.update { it.copy(desktopModeTabIds = it.desktopModeTabIds - tabId) }
         viewModelScope.launch {

@@ -188,6 +188,10 @@ object ZenWebViewManager {
 
 class ZenWebViewController {
     var webView: WebView? = null
+    var geckoSession: org.mozilla.geckoview.GeckoSession? = null
+    var activeTabId: String? = null
+    var canGoBackGecko: Boolean = false
+    var canGoForwardGecko: Boolean = false
     var onGoBackFallback: (() -> Unit)? = null
     var onGoForwardFallback: (() -> Unit)? = null
     var onGoBackTriggered: (() -> Unit)? = null
@@ -196,16 +200,27 @@ class ZenWebViewController {
     var lastHistoryNavTime: Long = 0L
 
     fun canGoBack(): Boolean {
+        if (geckoSession != null) return canGoBackGecko || onGoBackFallback != null
         return (webView?.canGoBack() == true) || onGoBackFallback != null
     }
 
     fun canGoForward(): Boolean {
+        if (geckoSession != null) return canGoForwardGecko || onGoForwardFallback != null
         return (webView?.canGoForward() == true) || onGoForwardFallback != null
     }
 
     fun goBack() {
         lastHistoryNavTime = System.currentTimeMillis()
         onGoBackTriggered?.invoke()
+        val gs = geckoSession
+        if (gs != null) {
+            if (canGoBackGecko) {
+                gs.goBack()
+            } else {
+                onGoBackFallback?.invoke()
+            }
+            return
+        }
         val wv = webView
         if (wv != null && wv.canGoBack()) {
             val list = wv.copyBackForwardList()
@@ -228,6 +243,15 @@ class ZenWebViewController {
 
     fun goForward() {
         lastHistoryNavTime = System.currentTimeMillis()
+        val gs = geckoSession
+        if (gs != null) {
+            if (canGoForwardGecko) {
+                gs.goForward()
+            } else {
+                onGoForwardFallback?.invoke()
+            }
+            return
+        }
         val wv = webView
         if (wv != null && wv.canGoForward()) {
             wv.goForward()
@@ -269,6 +293,11 @@ class ZenWebViewController {
     }
 
     fun reload() {
+        val gs = geckoSession
+        if (gs != null) {
+            gs.reload()
+            return
+        }
         webView?.reload()
     }
 
@@ -303,6 +332,21 @@ class ZenWebViewController {
     }
 
     fun executeExtensionAction(extension: com.example.data.FirefoxExtensionEntity) {
+        val gs = geckoSession
+        if (gs != null) {
+            when (extension.id) {
+                "ff_zen_translator" -> {
+                    gs.loadUri("javascript:(function(){ window.location.href = 'https://translate.google.com/translate?sl=auto&tl=en&u=' + encodeURIComponent(window.location.href); })();")
+                }
+                "ff_ublock_origin" -> {
+                    gs.loadUri("javascript:(function(){ if(typeof window.__zenStartUblockElementPicker==='function') window.__zenStartUblockElementPicker(); })();")
+                }
+                else -> if (extension.jsPayload.isNotBlank()) {
+                    gs.loadUri("javascript:(function(){ try { ${extension.jsPayload} } catch(e){} })();")
+                }
+            }
+            return
+        }
         when (extension.id) {
             "ff_zen_translator" -> launchTranslatorPanel()
             "ff_ublock_origin" -> launchUblockElementPicker()
@@ -337,6 +381,11 @@ class ZenWebViewController {
 
     /** Explicit state commands are used by Android's system media controls. */
     fun setMediaPlaying(playing: Boolean) {
+        val tabId = activeTabId
+        if (tabId != null && geckoSession != null) {
+            com.example.gecko.ZenGeckoManager.setMediaPlaying(tabId, playing)
+            return
+        }
         webView?.evaluateJavascript(
             """
             (function() {
@@ -409,6 +458,13 @@ class ZenWebViewController {
     }
 
     fun toggleMediaPlayPause() {
+        val tabId = activeTabId
+        if (tabId != null && geckoSession != null) {
+            val ms = com.example.gecko.ZenGeckoManager.activeMediaSessions[tabId]
+            val isPlaying = ms?.isActive == true
+            com.example.gecko.ZenGeckoManager.setMediaPlaying(tabId, !isPlaying)
+            return
+        }
         webView?.evaluateJavascript(
             """
             (function() {
@@ -486,12 +542,50 @@ class ZenWebViewController {
     }
 
     /** Seeks the page's main media element to an absolute position in milliseconds. */
-    fun seekMediaTo(positionMs: Long) = runSeek("t = $positionMs / 1000;")
+    fun seekMediaTo(positionMs: Long) {
+        val tabId = activeTabId
+        if (tabId != null && geckoSession != null) {
+            com.example.gecko.ZenGeckoManager.seekMediaTo(tabId, positionMs)
+            return
+        }
+        runSeek("t = $positionMs / 1000;")
+    }
 
     /** Seeks the page's main media element by a relative offset in milliseconds. */
-    fun seekMediaBy(deltaMs: Long) = runSeek("t = (m.currentTime || 0) + ($deltaMs / 1000);")
+    fun seekMediaBy(deltaMs: Long) {
+        val tabId = activeTabId
+        if (tabId != null && geckoSession != null) {
+            com.example.gecko.ZenGeckoManager.seekMediaBy(tabId, deltaMs)
+            return
+        }
+        runSeek("t = (m.currentTime || 0) + ($deltaMs / 1000);")
+    }
+
+    fun queryMediaProgress(onResult: (posMs: Long, durMs: Long) -> Unit) {
+        webView?.evaluateJavascript(
+            """(function() {
+                var v = document.querySelector('video, audio');
+                if (v && isFinite(v.duration) && v.duration > 0) {
+                    return Math.round(v.currentTime * 1000) + ':' + Math.round(v.duration * 1000);
+                }
+                return '';
+            })();"""
+        ) { raw ->
+            val clean = raw?.trim('"', ' ', '\'') ?: ""
+            val parts = clean.split(':')
+            if (parts.size == 2) {
+                val p = parts[0].toLongOrNull() ?: 0L
+                val d = parts[1].toLongOrNull() ?: 0L
+                if (d > 0) onResult(p, d)
+            }
+        }
+    }
 
     private fun runSeek(computeTarget: String) {
+        val tabId = activeTabId
+        if (tabId != null && geckoSession != null) {
+            return
+        }
         webView?.evaluateJavascript(
             """
             (function() {
@@ -535,6 +629,11 @@ class ZenWebViewController {
     /** Mutes/unmutes every media element and Web Audio context on the page (never clicks site buttons). */
     fun setMediaMuted(muted: Boolean) {
         isMuted = muted
+        val tabId = activeTabId
+        if (tabId != null && geckoSession != null) {
+            com.example.gecko.ZenGeckoManager.setMediaMuted(tabId, muted)
+            return
+        }
         webView?.evaluateJavascript(
             """
             (function() {
@@ -586,6 +685,10 @@ class ZenWebViewController {
 
     /** Stretches the playing video over the viewport while in the tiny PiP window. */
     fun setPipVideoMode(enabled: Boolean) {
+        if (geckoSession != null) {
+            // GeckoView naturally scales and preserves video within viewport without reloading
+            return
+        }
         webView?.evaluateJavascript(
             """
             (function() {
@@ -630,6 +733,11 @@ class ZenWebViewController {
 
     fun stopAllMedia() {
         isMuted = false
+        val tabId = activeTabId
+        if (tabId != null && geckoSession != null) {
+            com.example.gecko.ZenGeckoManager.setMediaPlaying(tabId, false)
+            return
+        }
         webView?.evaluateJavascript(
             """
             (function() {
@@ -699,7 +807,7 @@ class ZenWebViewController {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
+@SuppressLint("SetJavaScriptEnabled", "JavascriptInterface", "ClickableViewAccessibility")
 @Composable
 fun ZenWebPaneView(
     tab: TabEntity,
@@ -712,7 +820,7 @@ fun ZenWebPaneView(
     onPageVisited: (url: String, title: String?) -> Unit,
     onProgressChanged: (progress: Int, canBack: Boolean, canForward: Boolean) -> Unit,
     onTrackerBlocked: (BlockedTrackerEvent) -> Unit,
-    onMediaStateChanged: (isActive: Boolean, isPlaying: Boolean, title: String, domain: String, tabId: String) -> Unit,
+    onMediaStateChanged: (isActive: Boolean, isPlaying: Boolean, title: String, domain: String, tabId: String, artwork: android.graphics.Bitmap?) -> Unit,
     onInstallExtensionFromAmo: (url: String, title: String?) -> Unit = { _, _ -> },
     onAddHomeShortcut: (title: String, url: String) -> Unit,
     onUpdateHomeShortcut: (HomeShortcutEntity, String, String) -> Unit,
@@ -1150,7 +1258,8 @@ fun ZenWebPaneView(
                                 isPlaying,
                                 title.ifBlank { tab.title },
                                 host.ifBlank { ZenPrivacyEngine.extractHostDisplay(tab.url) },
-                                tab.id
+                                tab.id,
+                                null
                             )
                         }
                     }
@@ -1622,9 +1731,23 @@ fun ZenWebPaneView(
 
     Box(modifier = modifier.fillMaxSize()) {
         androidx.compose.runtime.key(tab.id) {
-            AndroidView(
-            factory = {
-                webView.apply {
+            ZenGeckoViewPort(
+                tab = tab,
+                uiState = currentUiState,
+                controller = controller,
+                isFocusedPane = isFocusedPane,
+                onPageVisited = onPageVisited,
+                onProgressChanged = onProgressChanged,
+                onTrackerBlocked = onTrackerBlocked,
+                onMediaStateChanged = onMediaStateChanged,
+                onOpenInNewTab = onOpenInNewTab,
+                onOpenSidebar = currentOnOpenSidebar,
+                modifier = Modifier.fillMaxSize()
+            )
+            if (false) {
+                AndroidView(
+                factory = {
+                    webView.apply {
                     (parent as? android.view.ViewGroup)?.removeView(this)
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(
@@ -2006,6 +2129,7 @@ fun ZenWebPaneView(
                 .fillMaxSize()
                 .testTag("zen_webview_${tab.id}")
         )
+            }
         }
 
         // Top Pull-to-Refresh Indicator when user pulls down from the top-most position of a webpage:

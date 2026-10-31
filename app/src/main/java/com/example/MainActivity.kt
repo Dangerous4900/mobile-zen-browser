@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
             applicationContext,
             ZenDatabase::class.java,
             "zen_browser.db"
-        ).fallbackToDestructiveMigration(false).build()
+        ).fallbackToDestructiveMigration(true).build()
     }
 
     private val repository: ZenRepository by lazy {
@@ -108,9 +108,9 @@ class MainActivity : ComponentActivity() {
             // Publish playback to Android (MediaSession + foreground service) so media is detected,
             // controllable from the shade/lock screen/headset, and survives screen-off.
             val media = uiState.mediaPlaybackState
-            LaunchedEffect(media.isActive, media.isPlaying, media.title, media.domain, uiState.sidebarConfig.backgroundPlayEnabled) {
+            LaunchedEffect(media.isActive, media.isPlaying, media.title, media.domain, media.artwork, uiState.sidebarConfig.backgroundPlayEnabled) {
                 if (media.isActive && uiState.sidebarConfig.backgroundPlayEnabled) {
-                    ZenMediaService.sync(applicationContext, media.isPlaying, media.title, media.domain)
+                    ZenMediaService.sync(applicationContext, media.isPlaying, media.title, media.domain, media.artwork)
                 } else {
                     ZenMediaService.stop(applicationContext)
                 }
@@ -130,9 +130,13 @@ class MainActivity : ComponentActivity() {
                 // Activity callbacks, so the PiP layout can never lag behind the ViewModel flow.
                 val winCfg = androidx.compose.ui.platform.LocalConfiguration.current
                 val tinyWindow = winCfg.screenHeightDp < 260 || winCfg.screenWidthDp < 240
-                val screenState = if ((pipWindow || tinyWindow) && !uiState.isInPictureInPictureMode) {
+                val screenState = if (pipWindow || tinyWindow) {
                     uiState.copy(isInPictureInPictureMode = true, isSidebarOpen = false)
-                } else uiState
+                } else {
+                    if (uiState.isInPictureInPictureMode) {
+                        uiState.copy(isInPictureInPictureMode = false, isSidebarOpen = false)
+                    } else uiState
+                }
                 ZenBrowserScreen(
                     uiState = screenState,
                     viewModel = browserViewModel,
@@ -322,8 +326,16 @@ class MainActivity : ComponentActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         pipWindow = isInPictureInPictureMode
         viewModelRef?.setPictureInPictureMode(isInPictureInPictureMode)
-        if (isInPictureInPictureMode) {
-            viewModelRef?.setSidebarOpen(false)
+        // Always ensure sidebar is kept closed during PiP and when maximizing from PiP
+        viewModelRef?.setSidebarOpen(false)
+        val curMedia = viewModelRef?.uiState?.value?.mediaPlaybackState
+        if (curMedia?.isPlaying == true) {
+            val activeTabId = curMedia.tabId.ifBlank {
+                viewModelRef?.uiState?.value?.focusedTab?.id
+            }
+            if (!activeTabId.isNullOrBlank()) {
+                com.example.gecko.ZenGeckoManager.setMediaPlaying(activeTabId, true)
+            }
         }
     }
 }

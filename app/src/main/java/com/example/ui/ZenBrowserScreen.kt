@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Extension
@@ -58,6 +60,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PictureInPicture
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
@@ -100,13 +103,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.BackSwipeSidebarMode
 import com.example.data.HorizontalSwipeNavigationMode
 import com.example.data.SidebarPosition
@@ -128,6 +134,8 @@ import com.example.ui.components.StartPageCustomizerSheet
 import com.example.ui.components.WorkspaceManagerSheet
 import com.example.ui.components.ZenGlanceOverlay
 import com.example.ui.components.ZenLibrarySheet
+import com.example.ui.components.ZenMediaCaptureSheet
+import com.example.ui.components.ZenAdvanceDownloadManagerSheet
 import com.example.ui.components.ZenModsStoreSheet
 import com.example.ui.components.ZenSidebarPanel
 import com.example.ui.components.ZenTutorialDialog
@@ -137,6 +145,68 @@ import com.example.data.PasswordEntity
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+
+private fun captureWindowBitmap(
+    view: android.view.View,
+    onCaptured: (android.graphics.Bitmap) -> Unit
+) {
+    var ctx = view.context
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is android.app.Activity) break
+        ctx = ctx.baseContext
+    }
+    val activity = ctx as? android.app.Activity
+    val decorView = activity?.window?.decorView ?: view
+    val vw = decorView.width.takeIf { it > 0 } ?: view.width
+    val vh = decorView.height.takeIf { it > 0 } ?: view.height
+    if (vw <= 0 || vh <= 0) return
+    val window = activity?.window
+
+    if (window != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        try {
+            val destBmp = android.graphics.Bitmap.createBitmap(vw, vh, android.graphics.Bitmap.Config.ARGB_8888)
+            val rect = android.graphics.Rect(0, 0, vw, vh)
+            android.view.PixelCopy.request(
+                window,
+                rect,
+                destBmp,
+                { copyResult ->
+                    if (copyResult == android.view.PixelCopy.SUCCESS) {
+                        onCaptured(destBmp)
+                    } else {
+                        captureViaViewDraw(view, onCaptured)
+                    }
+                },
+                android.os.Handler(android.os.Looper.getMainLooper())
+            )
+        } catch (_: Throwable) {
+            captureViaViewDraw(view, onCaptured)
+        }
+    } else {
+        captureViaViewDraw(view, onCaptured)
+    }
+}
+
+private fun captureViaViewDraw(
+    view: android.view.View,
+    onCaptured: (android.graphics.Bitmap) -> Unit
+) {
+    var ctx = view.context
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is android.app.Activity) break
+        ctx = ctx.baseContext
+    }
+    val targetView = (ctx as? android.app.Activity)?.window?.decorView ?: view
+    val vw = targetView.width.takeIf { it > 0 } ?: view.width
+    val vh = targetView.height.takeIf { it > 0 } ?: view.height
+    if (vw <= 0 || vh <= 0) return
+    runCatching {
+        val destBmp = android.graphics.Bitmap.createBitmap(vw, vh, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(destBmp)
+        targetView.draw(canvas)
+        onCaptured(destBmp)
+    }
+}
 
 @Composable
 fun ZenBrowserScreen(
@@ -155,12 +225,14 @@ fun ZenBrowserScreen(
     val onToggleMediaPlayPause: () -> Unit = {
         val shouldPlay = !uiState.mediaPlaybackState.isPlaying
         val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
+        if (tabId.isNotBlank()) {
+            com.example.gecko.ZenGeckoManager.setMediaPlaying(tabId, shouldPlay)
+        }
+        primaryWebController.setMediaPlaying(shouldPlay)
+        secondaryWebController.setMediaPlaying(shouldPlay)
         val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
         if (wv != null) {
             ZenWebViewController().apply { webView = wv }.setMediaPlaying(shouldPlay)
-        } else {
-            primaryWebController.setMediaPlaying(shouldPlay)
-            secondaryWebController.setMediaPlaying(shouldPlay)
         }
         viewModel.updateMediaPlaybackState(
             isActive = true,
@@ -174,6 +246,10 @@ fun ZenBrowserScreen(
     val onToggleMediaMute: () -> Unit = {
         val mute = !uiState.mediaPlaybackState.isMuted
         viewModel.setMediaMuted(mute)
+        val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
+        if (tabId.isNotBlank()) {
+            com.example.gecko.ZenGeckoManager.setMediaMuted(tabId, mute)
+        }
         primaryWebController.setMediaMuted(mute)
         secondaryWebController.setMediaMuted(mute)
         com.example.ui.components.ZenWebViewManager.getAllWebViews().values.forEach { wv ->
@@ -183,12 +259,14 @@ fun ZenBrowserScreen(
 
     val onDismissMediaBar: () -> Unit = {
         val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
+        if (tabId.isNotBlank()) {
+            com.example.gecko.ZenGeckoManager.setMediaPlaying(tabId, false)
+        }
+        primaryWebController.stopAllMedia()
+        secondaryWebController.stopAllMedia()
         val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
         if (wv != null) {
             ZenWebViewController().apply { webView = wv }.stopAllMedia()
-        } else {
-            primaryWebController.stopAllMedia()
-            secondaryWebController.stopAllMedia()
         }
         viewModel.dismissMediaPlaybackBar()
     }
@@ -210,6 +288,9 @@ fun ZenBrowserScreen(
         com.example.ZenMediaBus.onSetPlaying = { playing ->
             val media = uiState.mediaPlaybackState
             val tabId = media.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
+            if (tabId.isNotBlank()) {
+                com.example.gecko.ZenGeckoManager.setMediaPlaying(tabId, playing)
+            }
             val wv = if (tabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(tabId) else null
             if (wv != null) {
                 ZenWebViewController().apply { webView = wv }.setMediaPlaying(playing)
@@ -231,9 +312,17 @@ fun ZenBrowserScreen(
         com.example.ZenMediaBus.onStop = onDismissMediaBar
         com.example.ZenMediaBus.onSeekTo = { ms -> withMediaController { it.seekMediaTo(ms) } }
         com.example.ZenMediaBus.onSeekBy = { ms -> withMediaController { it.seekMediaBy(ms) } }
+        com.example.ZenMediaBus.onRequestProgress = {
+            withMediaController { controller ->
+                controller.queryMediaProgress { pos, dur ->
+                    com.example.ZenMediaService.progress(pos, dur)
+                }
+            }
+        }
         onDispose {
             com.example.ZenMediaBus.onSeekTo = null
             com.example.ZenMediaBus.onSeekBy = null
+            com.example.ZenMediaBus.onRequestProgress = null
             com.example.ZenMediaBus.onSetPlaying = null
             com.example.ZenMediaBus.onPlayPause = null
             com.example.ZenMediaBus.onStop = null
@@ -267,12 +356,13 @@ fun ZenBrowserScreen(
         primaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
         secondaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
 
-        // Swapping layouts re-parents the WebView, which can pause the page's media. If it was
-        // playing, resume it (a few times, since the re-attach timing varies by device).
         if (wasPlayingAtSwap) {
             repeat(3) {
                 delay(350)
-                val id = uiState.mediaPlaybackState.tabId
+                val id = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
+                if (id.isNotBlank()) {
+                    com.example.gecko.ZenGeckoManager.setMediaPlaying(id, true)
+                }
                 val target = if (id.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(id) else null
                 if (target != null) {
                     ZenWebViewController().apply { webView = target }.setMediaPlaying(true)
@@ -286,6 +376,7 @@ fun ZenBrowserScreen(
 
     var showExtensionsMenuPopup by remember { mutableStateOf(false) }
     var activeExtensionPopup by remember { mutableStateOf<com.example.data.FirefoxExtensionEntity?>(null) }
+    var activeAdmRequest by remember { mutableStateOf<com.example.downloads.AdmDownloadSubmission?>(null) }
 
     val handleSaveTabOffline: (TabEntity) -> Unit = remember(primaryWebController) {
         { tab ->
@@ -348,48 +439,6 @@ fun ZenBrowserScreen(
         }
     }
 
-    if (uiState.isInPictureInPictureMode) {
-        // PiP must render the media-owning tab, not blindly the focused tab. This matters
-        // when playback started in a sidebar/split tab and the sidebar is hidden for PiP.
-        val activeTab = uiState.allTabs.firstOrNull { it.id == uiState.mediaPlaybackState.tabId }
-            ?: uiState.focusedTab
-            ?: uiState.activePrimaryTab
-        if (activeTab != null) {
-            ZenWebPaneView(
-                tab = activeTab,
-                uiState = uiState,
-                controller = primaryWebController,
-                isFocusedPane = true,
-                onFocusPane = {},
-                onNavigateUrl = viewModel::navigateFocusedTab,
-                onReloadUnloadedTab = { viewModel.selectTab(it.id) },
-                onPageVisited = { url, title -> viewModel.onWebPageVisited(activeTab.id, url, title) },
-                onProgressChanged = viewModel::updateNavigationProgress,
-                onTrackerBlocked = viewModel::onTrackerBlocked,
-                onMediaStateChanged = viewModel::updateMediaPlaybackState,
-                onInstallExtensionFromAmo = viewModel::installExtensionFromAmoPage,
-                onAddHomeShortcut = viewModel::addHomeShortcut,
-                onUpdateHomeShortcut = viewModel::updateHomeShortcut,
-                onDeleteHomeShortcut = viewModel::deleteHomeShortcut,
-                onUpdateCustomTextPosition = { _, _ -> },
-                onOpenSheet = viewModel::openSheet,
-                onToggleSplitView = { viewModel.toggleSplitView() },
-                onOpenGlance = viewModel::openGlance,
-                onOpenInNewTab = { url, forceSwitch -> viewModel.openLinkInNewTab(url, forceSwitch = forceSwitch) },
-                onOpenInPrivateTab = { url -> viewModel.openLinkInNewTab(url, isPrivate = true) },
-                onUpdateSwitchToNewTabImmediately = viewModel::updateSwitchToNewTabImmediately,
-                onPopTabHistory = viewModel::popTabHistory,
-                onPopTabForward = viewModel::popTabForward,
-                onPopTabHistoryOffset = viewModel::popTabHistoryOffset,
-                onGetTabHistoryEntries = viewModel::getTabHistoryEntries,
-                onOpenSidebar = {},
-                onSavePassword = viewModel::insertPassword,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        return
-    }
-
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -415,8 +464,7 @@ fun ZenBrowserScreen(
         // Use the immediate target blur radius when the Side Panel is open so the blur never drops to 0 during animations or recompositions
         val activeSidebarBlurRadius = if (sidebarCfg.glassBlurIntensity > 0.01f) targetBackdropBlur else 0.dp
 
-        // Captured viewport snapshot fallback so even when WebView hardware surfaces or static frames don't trigger a new layer record,
-        // the Side Panel always has a guaranteed non-blank backdrop to blur without flickering on and off.
+        // Captured viewport snapshot using PixelCopy to ensure GeckoView hardware SurfaceView is captured
         var capturedViewportBitmap by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
         var softwareBlurredBackdrop by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
 
@@ -431,37 +479,30 @@ fun ZenBrowserScreen(
             sidebarCfg.startPageImageUri,
             sidebarCfg.startPageBrightness
         ) {
-            if ((uiState.isSidebarOpen || sidebarPinnedOpen) && sidebarCfg.glassBlurIntensity > 0.01f) {
+            if (sidebarCfg.glassBlurIntensity > 0.01f) {
                 val captureFrame = {
-                    val vw = localView.width
-                    val vh = localView.height
-                    if (vw > 0 && vh > 0) {
-                        runCatching {
-                            val scale = 0.35f
-                            val bmpW = (vw * scale).roundToInt().coerceAtLeast(32)
-                            val bmpH = (vh * scale).roundToInt().coerceAtLeast(32)
-                            val rawBmp = android.graphics.Bitmap.createBitmap(bmpW, bmpH, android.graphics.Bitmap.Config.ARGB_8888)
-                            val rawCanvas = android.graphics.Canvas(rawBmp)
-                            rawCanvas.scale(scale, scale)
-                            localView.draw(rawCanvas)
-                            capturedViewportBitmap = rawBmp.asImageBitmap()
-
-                            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
-                                val blurScale = (0.24f - sidebarCfg.glassBlurIntensity * 0.16f).coerceIn(0.06f, 0.24f)
-                                val smallW = (vw * blurScale).roundToInt().coerceAtLeast(16)
-                                val smallH = (vh * blurScale).roundToInt().coerceAtLeast(16)
-                                val smallBmp = android.graphics.Bitmap.createScaledBitmap(rawBmp, smallW, smallH, true)
-                                val upBmp = android.graphics.Bitmap.createScaledBitmap(smallBmp, bmpW, bmpH, true)
-                                val downBmp = android.graphics.Bitmap.createScaledBitmap(upBmp, smallW, smallH, true)
-                                val finalBmp = android.graphics.Bitmap.createScaledBitmap(downBmp, bmpW, bmpH, true)
-                                softwareBlurredBackdrop = finalBmp.asImageBitmap()
-                            }
-                        }
+                    captureWindowBitmap(localView) { rawBmp ->
+                        capturedViewportBitmap = rawBmp.asImageBitmap()
+                        val vw = rawBmp.width
+                        val vh = rawBmp.height
+                        val blurScale = (0.24f - sidebarCfg.glassBlurIntensity * 0.16f).coerceIn(0.06f, 0.24f)
+                        val smallW = (vw * blurScale).roundToInt().coerceAtLeast(16)
+                        val smallH = (vh * blurScale).roundToInt().coerceAtLeast(16)
+                        val smallBmp = android.graphics.Bitmap.createScaledBitmap(rawBmp, smallW, smallH, true)
+                        val upBmp = android.graphics.Bitmap.createScaledBitmap(smallBmp, vw, vh, true)
+                        val downBmp = android.graphics.Bitmap.createScaledBitmap(upBmp, smallW, smallH, true)
+                        val finalBmp = android.graphics.Bitmap.createScaledBitmap(downBmp, vw, vh, true)
+                        softwareBlurredBackdrop = finalBmp.asImageBitmap()
                     }
                 }
-                captureFrame()
-                kotlinx.coroutines.delay(120)
-                captureFrame()
+                if (uiState.isSidebarOpen) {
+                    captureFrame()
+                } else {
+                    if (uiState.pageLoadingProgress == 100) {
+                        delay(250)
+                    }
+                    captureFrame()
+                }
             }
         }
 
@@ -469,12 +510,6 @@ fun ZenBrowserScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .blur(popupBlurRadius)
-                .drawWithContent {
-                    viewportGraphicsLayer.record {
-                        this@drawWithContent.drawContent()
-                    }
-                    drawContent()
-                }
         ) {
             if (sidebarPinnedOpen && sidebarCfg.position == SidebarPosition.LEFT && !uiState.isInPictureInPictureMode) {
                 ZenSidebarPanel(
@@ -543,6 +578,12 @@ fun ZenBrowserScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .drawWithContent {
+                        viewportGraphicsLayer.record {
+                            this@drawWithContent.drawContent()
+                        }
+                        drawContent()
+                    }
             ) {
                 // Top Toolbar (when configured to Top)
                 if (!uiState.isInPictureInPictureMode && !uiState.isCompactFullscreen && sidebarCfg.urlBarPosition == UrlBarPosition.TOP) {
@@ -571,7 +612,9 @@ fun ZenBrowserScreen(
                         },
                         onToggleReader = viewModel::toggleReaderMode,
                         onToggleDesktopMode = viewModel::toggleDesktopMode,
-                        onEnterPip = onEnterPip
+                        onEnterPip = onEnterPip,
+                        onOpenMediaCapture = { viewModel.openSheet(ActiveModalSheet.MEDIA_CAPTURE) },
+                        onOpenAdm = { viewModel.openSheet(ActiveModalSheet.ADVANCED_DOWNLOAD_MANAGER) }
                     )
                 } else if (!uiState.isInPictureInPictureMode && !uiState.isCompactFullscreen) {
                     // When not in fullscreen mode and there is no top toolbar (Single Toolbar / Sidebar Only mode, or Bottom Toolbar mode),
@@ -612,7 +655,11 @@ fun ZenBrowserScreen(
                         .fillMaxWidth()
                 ) {
                     val totalHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-                    val primaryTab = uiState.activePrimaryTab
+                    val primaryTab = if (uiState.isInPictureInPictureMode) {
+                        uiState.allTabs.firstOrNull { it.id == uiState.mediaPlaybackState.tabId } ?: uiState.activePrimaryTab
+                    } else {
+                        uiState.activePrimaryTab
+                    }
                     val secondaryTab = uiState.activeSecondaryTab
 
                     val activeTabIds = remember(primaryTab?.id, secondaryTab?.id, uiState.isSplitViewEnabled) {
@@ -645,7 +692,7 @@ fun ZenBrowserScreen(
                     }
 
                     if (primaryTab != null) {
-                        if (uiState.isSplitViewEnabled && secondaryTab != null) {
+                        if (!uiState.isInPictureInPictureMode && uiState.isSplitViewEnabled && secondaryTab != null) {
                             Column(modifier = Modifier.fillMaxSize()) {
                                 Box(
                                     modifier = Modifier
@@ -973,7 +1020,9 @@ fun ZenBrowserScreen(
                         },
                         onToggleReader = viewModel::toggleReaderMode,
                         onToggleDesktopMode = viewModel::toggleDesktopMode,
-                        onEnterPip = onEnterPip
+                        onEnterPip = onEnterPip,
+                        onOpenMediaCapture = { viewModel.openSheet(ActiveModalSheet.MEDIA_CAPTURE) },
+                        onOpenAdm = { viewModel.openSheet(ActiveModalSheet.ADVANCED_DOWNLOAD_MANAGER) }
                     )
                 }
             }
@@ -1349,44 +1398,24 @@ fun ZenBrowserScreen(
             }
 
             ActiveModalSheet.FIREFOX_EXTENSIONS -> {
-                FirefoxExtensionsSheet(
+                com.example.extensions.ZenExtensionsClintStyleScreen(
                     uiState = uiState,
-                    onDismiss = viewModel::closeSheet,
-                    onInstallOrUninstall = viewModel::installOrUninstallFirefoxExtension,
-                    onToggleEnabled = viewModel::toggleFirefoxExtensionEnabled,
+                    onExit = viewModel::closeSheet,
+                    onToggleExtension = viewModel::toggleFirefoxExtensionEnabled,
                     onToggleAllowInPrivate = viewModel::toggleFirefoxExtensionPrivateAllowed,
-                    onRunExtensionOnCurrentTab = { ext ->
+                    onUninstallExtension = viewModel::installOrUninstallFirefoxExtension,
+                    onOpenExtensionPopup = { ext ->
                         viewModel.closeSheet()
-                        viewModel.setSidebarOpen(false)
-                        if (uiState.focusedTab?.url == "zen://home") {
-                            viewModel.showBanner("Open a webpage first to use '${ext.name}'")
-                        } else {
-                            activeController.executeExtensionAction(ext)
-                        }
+                        activeExtensionPopup = ext
                     },
-                    onLaunchUblockElementPicker = {
-                        viewModel.closeSheet()
-                        viewModel.setSidebarOpen(false)
-                        if (uiState.focusedTab?.url == "zen://home") {
-                            viewModel.showBanner("Open a webpage first to use uBlock Element Picker")
-                        } else {
-                            activeController.launchUblockElementPicker()
-                        }
-                    },
-                    onImportXpiFile = viewModel::importFirefoxXpiPackage,
-                    onUpdateExtensionDetails = viewModel::updateFirefoxExtensionDetails,
-                    onAddCustomExtension = viewModel::addCustomFirefoxExtension,
-                    onInstallFromAmoUrl = { amoUrl ->
-                        viewModel.installExtensionFromAmoPage(amoUrl, null)
-                    },
-                    onOpenAmoStoreInBrowser = {
+                    onOpenAmoStore = {
                         viewModel.closeSheet()
                         viewModel.createNewTab("https://addons.mozilla.org/en-US/firefox/")
                     },
-                    onOpenZenMods = {
-                        viewModel.openSheet(ActiveModalSheet.ZEN_MODS)
+                    onInstallFromUrl = { url ->
+                        viewModel.installExtensionFromAmoPage(url, null)
                     },
-                    onInstallUserscript = viewModel::installUserscript
+                    onImportFile = viewModel::importFirefoxXpiPackage
                 )
             }
 
@@ -1448,7 +1477,52 @@ fun ZenBrowserScreen(
                 )
             }
 
+            ActiveModalSheet.MEDIA_CAPTURE -> {
+                com.example.mediacapture.ZenMediaCaptureDialog(
+                    tabId = uiState.focusedTab?.id ?: "",
+                    onDismiss = viewModel::closeSheet,
+                    onDownloadWithAdm = { url, filename, kind ->
+                        viewModel.closeSheet()
+                        activeAdmRequest = com.example.downloads.AdmDownloadSubmission(
+                            url = url,
+                            fileName = filename,
+                            totalBytes = 0L,
+                            partsCount = 8,
+                            speedLimitBytesPerSec = 0L,
+                            unmeteredOnly = false,
+                            category = when (kind) {
+                                com.example.mediacapture.MediaKind.AUDIO -> com.example.downloads.AdmCategory.AUDIO
+                                com.example.mediacapture.MediaKind.SUBTITLE -> com.example.downloads.AdmCategory.DOCUMENT
+                                else -> com.example.downloads.AdmCategory.VIDEO
+                            }
+                        )
+                    }
+                )
+            }
+
+            ActiveModalSheet.ADVANCED_DOWNLOAD_MANAGER -> {
+                com.example.downloads.ZenAdmSheet(
+                    onDismiss = viewModel::closeSheet
+                )
+            }
+
             ActiveModalSheet.NONE -> {}
+        }
+
+        // Advance Download Manager (ADM) Pre-Download Configuration Dialog
+        activeAdmRequest?.let { req ->
+            com.example.downloads.ZenAdmRequestDialog(
+                url = req.url,
+                initialFilename = req.fileName,
+                estimatedSizeBytes = req.totalBytes,
+                initialCategory = req.category,
+                onDismiss = { activeAdmRequest = null },
+                onStartDownload = { submission ->
+                    activeAdmRequest = null
+                    com.example.downloads.ZenAdmManager.startDownload(submission)
+                    viewModel.showBanner("ADM: Download started with ${submission.partsCount} parallel threads")
+                }
+            )
         }
 
         // At a Glance Full Peek Card Overlay
@@ -1712,7 +1786,9 @@ private fun FirefoxToolbar(
     onOpenExtensionPopup: (com.example.data.FirefoxExtensionEntity) -> Unit = {},
     onToggleReader: () -> Unit,
     onToggleDesktopMode: () -> Unit = {},
-    onEnterPip: () -> Unit = {}
+    onEnterPip: () -> Unit = {},
+    onOpenMediaCapture: () -> Unit = {},
+    onOpenAdm: () -> Unit = {}
 ) {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -1950,6 +2026,61 @@ private fun FirefoxToolbar(
                         imageVector = Icons.Default.Extension,
                         contentDescription = "Firefox Add-ons & Extensions Menu",
                         tint = if (ublockOn) Color(0xFF34D399) else Color(0xFFD4D4D8),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // Dedicated Media Capture Button with live stream count badge
+                val focusedTabId = uiState.focusedTab?.id ?: ""
+                val detectedMedia by com.example.mediacapture.MediaCaptureStore.observe(focusedTabId).collectAsStateWithLifecycle(emptyList())
+
+                if (focusedUrl != "zen://home") {
+                    IconButton(
+                        onClick = onOpenMediaCapture,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("toolbar_media_capture_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Videocam,
+                                contentDescription = "Media Capture & Sniffer (${detectedMedia.size} streams)",
+                                tint = if (detectedMedia.isNotEmpty()) Color(0xFFEF4444) else Color(0xFFD4D4D8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            if (detectedMedia.isNotEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 4.dp, y = (-4).dp)
+                                        .size(13.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFEF4444)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = detectedMedia.size.coerceAtMost(99).toString(),
+                                        color = Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Dedicated Advance Download Manager (ADM) Button
+                IconButton(
+                    onClick = onOpenAdm,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("toolbar_adm_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Advance Download Manager (ADM)",
+                        tint = Color(0xFFD4D4D8),
                         modifier = Modifier.size(18.dp)
                     )
                 }

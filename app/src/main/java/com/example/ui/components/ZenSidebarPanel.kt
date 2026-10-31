@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -83,6 +84,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -136,11 +138,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.example.data.MediaPlaybackState
 import com.example.data.SidebarColorMode
+import com.example.data.SidebarPosition
 import com.example.data.SidebarSectionType
 import com.example.data.SidebarToolItem
 import com.example.data.TabEntity
@@ -319,8 +323,8 @@ fun ZenSidebarPanel(
         opacityFraction
     }
 
-    val panelShape = if (isLiquidGlass) RoundedCornerShape(18.dp) else RoundedCornerShape(0.dp)
-    val panelBorderBrush = if (isLiquidGlass) {
+    val isRightSidebar = sidebarCfg.position == SidebarPosition.RIGHT
+    val endBorderBrush = if (isLiquidGlass) {
         Brush.verticalGradient(
             colors = listOf(
                 Color.White.copy(alpha = 0.38f),
@@ -330,7 +334,7 @@ fun ZenSidebarPanel(
         )
     } else {
         Brush.verticalGradient(
-            colors = listOf(Color(0xFF222226), Color(0xFF222226))
+            colors = listOf(Color(0xFF2E2E34), Color(0xFF222226), Color(0xFF2E2E34))
         )
     }
 
@@ -341,14 +345,32 @@ fun ZenSidebarPanel(
     Surface(
         modifier = modifier
             .width(widthDp)
-            .fillMaxHeight()
-            .padding(if (isLiquidGlass) 6.dp else 0.dp)
-            .clip(panelShape)
-            .border(
-                width = if (isLiquidGlass) 1.2.dp else 1.dp,
-                brush = panelBorderBrush,
-                shape = panelShape
+            .then(
+                if (!uiState.isCompactFullscreen) {
+                    Modifier.windowInsetsPadding(WindowInsets.systemBars)
+                } else {
+                    Modifier
+                }
             )
+            .fillMaxHeight()
+            .drawWithContent {
+                drawContent()
+                val strokeWidthPx = (if (isLiquidGlass) 1.2.dp else 1.dp).toPx()
+                // Seamless Side Panel:
+                // Remove top, bottom, and the edge it comes out from (flush against screen edge).
+                // Leave ONLY the outline where it ends (dividing line touching the web viewport/content).
+                val x = if (isRightSidebar) {
+                    strokeWidthPx / 2f
+                } else {
+                    size.width - (strokeWidthPx / 2f)
+                }
+                drawLine(
+                    brush = endBorderBrush,
+                    start = Offset(x, 0f),
+                    end = Offset(x, size.height),
+                    strokeWidth = strokeWidthPx
+                )
+            }
             .pointerInput(uiState.workspaces, currentWsIndex) {
                 var accumulatedDragX = 0f
                 var hasTriggeredSwipe = false
@@ -387,7 +409,7 @@ fun ZenSidebarPanel(
                 onLongClick = { showEmptyAreaEditMenu = true }
             )
             .testTag("zen_sidebar_panel"),
-        shape = panelShape,
+        shape = RectangleShape,
         color = Color.Transparent
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -412,7 +434,7 @@ fun ZenSidebarPanel(
                             )
                         }
                         .graphicsLayer {
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && softwareBlurredBackdrop == null) {
                                 renderEffect = android.graphics.RenderEffect.createBlurEffect(
                                     blurPx,
                                     blurPx,
@@ -421,42 +443,43 @@ fun ZenSidebarPanel(
                             }
                         }
                         .drawWithContent {
-                            val swBmp = softwareBlurredBackdrop
-                            val rawBmp = backdropImageBitmap
-                            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S && swBmp != null) {
+                            val activeBmp = softwareBlurredBackdrop ?: backdropImageBitmap
+                            if (activeBmp != null) {
+                                val bmpW = activeBmp.width
+                                val bmpH = activeBmp.height
+                                val srcX = panelBoundsInRoot.left.roundToInt().coerceIn(0, (bmpW - 1).coerceAtLeast(0))
+                                val srcY = panelBoundsInRoot.top.roundToInt().coerceIn(0, (bmpH - 1).coerceAtLeast(0))
+                                val srcW = size.width.roundToInt().coerceIn(1, (bmpW - srcX).coerceAtLeast(1))
+                                val srcH = size.height.roundToInt().coerceIn(1, (bmpH - srcY).coerceAtLeast(1))
                                 drawImage(
-                                    image = swBmp,
+                                    image = activeBmp,
+                                    srcOffset = androidx.compose.ui.unit.IntOffset(srcX, srcY),
+                                    srcSize = androidx.compose.ui.unit.IntSize(srcW, srcH),
+                                    dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
                                     dstSize = androidx.compose.ui.unit.IntSize(
                                         size.width.roundToInt().coerceAtLeast(1),
                                         size.height.roundToInt().coerceAtLeast(1)
                                     )
                                 )
-                            } else {
-                                // Draw fallback snapshot first (so even if a hardware WebView surface frame is skipped, it never flashes blank)
-                                if (rawBmp != null) {
-                                    drawImage(
-                                        image = rawBmp,
-                                        dstSize = androidx.compose.ui.unit.IntSize(
-                                            size.width.roundToInt().coerceAtLeast(1),
-                                            size.height.roundToInt().coerceAtLeast(1)
-                                        )
-                                    )
-                                }
-                                // Draw live recorded Compose & WebView viewport aligned to the Side Panel's exact screen coordinates
-                                if (viewportGraphicsLayer != null) {
-                                    val offsetX = -panelBoundsInRoot.left
-                                    val offsetY = -panelBoundsInRoot.top
-                                    drawContext.canvas.save()
-                                    drawContext.canvas.translate(offsetX, offsetY)
-                                    drawLayer(viewportGraphicsLayer)
-                                    drawContext.canvas.restore()
-                                }
+                            } else if (viewportGraphicsLayer != null) {
+                                val offsetX = -panelBoundsInRoot.left
+                                val offsetY = -panelBoundsInRoot.top
+                                drawContext.canvas.save()
+                                drawContext.canvas.translate(offsetX, offsetY)
+                                drawLayer(viewportGraphicsLayer)
+                                drawContext.canvas.restore()
                             }
                         }
                 )
             }
 
-            // 2. Side Panel Opacity Tint Layer (strictly controlled by the Side Panel Opacity slider: 5% -> 100%)
+            // 2. Side Panel Opacity Tint Layer (calibrated so blurred website is luminous and visible when blur is active)
+            val effectiveTintAlpha = if (blurFraction > 0.01f) {
+                (panelAlpha * 0.42f).coerceIn(0.12f, 0.65f)
+            } else {
+                panelAlpha
+            }
+
             if (isLiquidGlass) {
                 Box(
                     modifier = Modifier
@@ -464,10 +487,10 @@ fun ZenSidebarPanel(
                         .background(
                             Brush.linearGradient(
                                 colors = listOf(
-                                    Color.White.copy(alpha = (0.10f + opacityFraction * 0.12f).coerceIn(0.05f, 0.28f)),
-                                    baseSurfaceColor.copy(alpha = panelAlpha),
-                                    baseSurfaceColor.copy(alpha = (panelAlpha + 0.08f).coerceAtMost(0.96f)),
-                                    Color.White.copy(alpha = (0.06f + opacityFraction * 0.08f).coerceIn(0.03f, 0.20f))
+                                    Color.White.copy(alpha = (0.08f + opacityFraction * 0.08f).coerceIn(0.04f, 0.22f)),
+                                    baseSurfaceColor.copy(alpha = effectiveTintAlpha),
+                                    baseSurfaceColor.copy(alpha = (effectiveTintAlpha + 0.08f).coerceAtMost(0.96f)),
+                                    Color.White.copy(alpha = (0.04f + opacityFraction * 0.06f).coerceIn(0.02f, 0.16f))
                                 ),
                                 start = Offset(0f, 0f),
                                 end = Offset(800f, 1800f)
@@ -478,7 +501,7 @@ fun ZenSidebarPanel(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(baseSurfaceColor.copy(alpha = panelAlpha))
+                        .background(baseSurfaceColor.copy(alpha = effectiveTintAlpha))
                 )
             }
 
@@ -506,6 +529,21 @@ fun ZenSidebarPanel(
                             onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR)
                         },
                         modifier = Modifier.testTag("sidebar_empty_area_edit_menu_item")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Customize Top Buttons") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = "Customize Top Buttons",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        onClick = {
+                            showEmptyAreaEditMenu = false
+                            onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR)
+                        },
+                        modifier = Modifier.testTag("sidebar_customize_top_buttons_menu_item")
                     )
                     DropdownMenuItem(
                         text = { Text("Customize Essentials Space") },
@@ -544,7 +582,13 @@ fun ZenSidebarPanel(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .then(
+                        if (uiState.isCompactFullscreen) {
+                            Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+                        } else {
+                            Modifier
+                        }
+                    )
                     .padding(horizontal = 10.dp, vertical = 10.dp)
             ) {
                 // Backward & Forward Navigation Controls Row on the Side Panel
@@ -1248,6 +1292,8 @@ fun ZenSidebarPanel(
                     isDesktopMode = uiState.isFocusedTabDesktopMode,
                     onToggleDesktopMode = onToggleDesktopMode,
                     onOpenExtensions = onOpenExtensions,
+                    onOpenMediaCapture = { onOpenSheet(ActiveModalSheet.MEDIA_CAPTURE) },
+                    onOpenAdm = { onOpenSheet(ActiveModalSheet.ADVANCED_DOWNLOAD_MANAGER) },
                     onOpenLibrary = { onOpenSheet(ActiveModalSheet.LIBRARY) },
                     onOpenStudio = { onOpenSheet(ActiveModalSheet.SIDEBAR_STUDIO) },
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
@@ -1959,6 +2005,8 @@ private fun SidebarBottomFooterBar(
     isDesktopMode: Boolean = false,
     onToggleDesktopMode: () -> Unit = {},
     onOpenExtensions: () -> Unit,
+    onOpenMediaCapture: () -> Unit = {},
+    onOpenAdm: () -> Unit = {},
     onOpenLibrary: () -> Unit = {},
     onOpenStudio: () -> Unit,
     onToggleMediaPlayPause: () -> Unit,
@@ -2178,6 +2226,24 @@ private fun SidebarBottomFooterBar(
                                 active = enabledExtensionsCount > 0,
                                 onClick = onOpenExtensions,
                                 testTag = "quick_tool_firefox_extensions"
+                            )
+                        }
+                        SidebarToolItem.MEDIA_CAPTURE -> {
+                            ToolbarIconToggle(
+                                icon = Icons.Default.Videocam,
+                                label = "Media Capture",
+                                active = false,
+                                onClick = onOpenMediaCapture,
+                                testTag = "quick_tool_media_capture"
+                            )
+                        }
+                        SidebarToolItem.DOWNLOAD_MANAGER -> {
+                            ToolbarIconToggle(
+                                icon = Icons.Default.Download,
+                                label = "Downloads (ADM)",
+                                active = false,
+                                onClick = onOpenAdm,
+                                testTag = "quick_tool_adm"
                             )
                         }
                         SidebarToolItem.LIBRARY -> {

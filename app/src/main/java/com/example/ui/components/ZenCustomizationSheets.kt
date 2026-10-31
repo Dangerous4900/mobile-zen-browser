@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -1884,6 +1885,85 @@ fun SidebarLayoutEditorSheet(
                     }
                 }
             }
+
+            item {
+                SectionCard(title = "TOP BUTTONS & CONTROLS (ADD, REMOVE OR REORDER)") {
+                    Text(
+                        text = "Customize which buttons appear at the top of the Side Panel (Back, Forward, Reload, Home, Glance, Translate, Reader, Extensions, Shield, Desktop, Edit) and reorder them:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFA1A1AA)
+                    )
+                    TopToolbarToolItem.entries.forEach { tool ->
+                        val isEnabled = tool in cfg.enabledTopToolbarTools
+                        val currentIndex = cfg.enabledTopToolbarTools.indexOf(tool)
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF18181C),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isEnabled) Color(0xFF3F3F46) else Color(0xFF222226)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("sidebar_editor_top_tool_${tool.name.lowercase()}")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = tool.label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isEnabled) Color(0xFFF4F4F6) else Color(0xFF71717A)
+                                    )
+                                    Text(
+                                        text = if (isEnabled) "Shown in Top Row (#${currentIndex + 1})" else "Hidden",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFFA1A1AA)
+                                    )
+                                }
+                                if (isEnabled) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(
+                                            onClick = { onMoveTopToolItem(tool, -1) },
+                                            enabled = currentIndex > 0,
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ArrowUpward,
+                                                contentDescription = "Move Left",
+                                                tint = if (currentIndex > 0) Color(0xFFD4D4D8) else Color(0xFF52525B),
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { onMoveTopToolItem(tool, 1) },
+                                            enabled = currentIndex < cfg.enabledTopToolbarTools.lastIndex,
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ArrowDownward,
+                                                contentDescription = "Move Right",
+                                                tint = if (currentIndex < cfg.enabledTopToolbarTools.lastIndex) Color(0xFFD4D4D8) else Color(0xFF52525B),
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Switch(
+                                    checked = isEnabled,
+                                    onCheckedChange = { checked -> onToggleTopToolItem(tool, checked) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1978,6 +2058,7 @@ fun FirefoxExtensionsSheet(
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(bottom = 36.dp)
         ) {
+            // Screen 1 Style Header: Title "Extensions", Back button, Refresh
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1985,63 +2066,181 @@ fun FirefoxExtensionsSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Extension,
-                            contentDescription = null,
-                            tint = Color(0xFFF4F4F6),
-                            modifier = Modifier.size(22.dp)
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = Color(0xFFF4F4F6),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Extensions",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFF4F4F6)
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = "Zen Desktop Extensions Manager",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.SemiBold
+                    }
+
+                    IconButton(
+                        onClick = { /* refresh extensions */ },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Reload Extensions",
+                            tint = Color(0xFFD4D4D8),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            // Screen 1 Hero Banner Card: Title "Extensions", "X on · Y off", "Browse add-ons", "From file", "From link"
+            item {
+                val installedCount = uiState.firefoxExtensions.count { it.isInstalled }
+                val enabledCount = uiState.firefoxExtensions.count { it.isInstalled && it.isEnabled }
+                val disabledCount = installedCount - enabledCount
+
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF1B1B22),
+                    border = BorderStroke(1.dp, Color(0xFF2E2E3C)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Extensions",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFF4F4F6),
+                            fontSize = 18.sp
+                        )
+                        Text(
+                            text = "$enabledCount on · $disabledCount off",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFA1A1AA)
+                        )
+
+                        // "Browse add-ons" primary pill button
+                        Button(
+                            onClick = onOpenAmoStoreInBrowser,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF282834),
+                                contentColor = Color(0xFFF4F4F6)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp)
+                                .testTag("browse_addons_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.OpenInBrowser,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
                             )
-                            Text(
-                                text = "Desktop WebExtensions Engine • AMO Store & .xpi / .user.js Support",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFFA1A1AA)
-                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Browse add-ons", fontWeight = FontWeight.SemiBold)
+                        }
+
+                        // Row: [ From file ] and [ From link ]
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                onClick = { xpiFilePickerLauncher.launch(arrayOf("*/*")) },
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF242430),
+                                border = BorderStroke(1.dp, Color(0xFF383848)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp)
+                                    .testTag("install_from_file_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(imageVector = Icons.Default.FolderSpecial, contentDescription = null, tint = Color(0xFFD4D4D8), modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("From file", style = MaterialTheme.typography.labelMedium, color = Color(0xFFF4F4F6), fontWeight = FontWeight.Medium)
+                                }
+                            }
+
+                            Surface(
+                                onClick = {
+                                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                    val clipText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                                    if (clipText.startsWith("http")) amoUrlInput = clipText
+                                    showCustomAddDialog = true
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF242430),
+                                border = BorderStroke(1.dp, Color(0xFF383848)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp)
+                                    .testTag("install_from_link_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(imageVector = Icons.Default.Language, contentDescription = null, tint = Color(0xFFD4D4D8), modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("From link", style = MaterialTheme.typography.labelMedium, color = Color(0xFFF4F4F6), fontWeight = FontWeight.Medium)
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            // Desktop WebExtensions Engine Status
+            // Screen 1 Filter Pills: [ All X ] [ On Y ] [ Off Z ]
             item {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF161922),
-                    border = BorderStroke(1.dp, Color(0xFF283348)),
-                    modifier = Modifier.fillMaxWidth()
+                val installedCount = uiState.firefoxExtensions.count { it.isInstalled }
+                val enabledCount = uiState.firefoxExtensions.count { it.isInstalled && it.isEnabled }
+                val disabledCount = installedCount - enabledCount
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    val filters = listOf(
+                        Triple("All", "All $installedCount", selectedCategoryFilter == "All"),
+                        Triple("On", "On $enabledCount", selectedCategoryFilter == "On"),
+                        Triple("Off", "Off $disabledCount", selectedCategoryFilter == "Off")
+                    )
+
+                    filters.forEach { (key, label, isSelected) ->
+                        Surface(
+                            onClick = { selectedCategoryFilter = key },
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else Color(0xFF1E1E28),
+                            border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else BorderStroke(1.dp, Color(0xFF2E2E3C)),
+                            modifier = Modifier.height(32.dp)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("🧩", fontSize = 14.sp)
-                                Text("Desktop WebExtensions V3 + V2", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color(0xFF93C5FD))
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = Color(0xFF1E3A8A)
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 14.dp)
                             ) {
-                                Text("ACTIVE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFFBFDBFE), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFFA1A1AA)
+                                )
                             }
                         }
-                        Text(
-                            text = "APIs: window.browser, window.chrome, browser.runtime, browser.storage, browser.tabs • Greasemonkey/Tampermonkey GM_* Userscripts engine enabled",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF94A3B8),
-                            fontSize = 11.sp
-                        )
                     }
                 }
             }
@@ -2851,7 +3050,7 @@ private fun FirefoxExtensionCard(
                 color = Color(0xFFD4D4D8)
             )
 
-            // Match pattern & active status badges + Manual Launch button for Zen Translator / uBlock Origin
+            // Screen 1 Style Badges: Access level pill with dot & Private tabs pill toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2861,31 +3060,46 @@ private fun FirefoxExtensionCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val accessLabel = if (extension.permissions.contains("Broad", ignoreCase = true)) "Broad access" else "Moderate access"
                     Surface(
-                        shape = RoundedCornerShape(5.dp),
-                        color = Color(0xFF1F1F25),
-                        border = BorderStroke(1.dp, Color(0xFF2E2E36))
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF1E1E28),
+                        border = BorderStroke(1.dp, Color(0xFF2E2E3C))
                     ) {
-                        Text(
-                            text = "Matches: ${extension.matchPatterns}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFA1A1AA),
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                        )
-                    }
-                    if (isActiveOnCurrentTab) {
-                        Surface(
-                            shape = RoundedCornerShape(5.dp),
-                            color = Color(0xFF142822),
-                            border = BorderStroke(1.dp, Color(0xFF34D399).copy(alpha = 0.5f))
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (accessLabel == "Broad access") Color(0xFFF59E0B) else Color(0xFF60A5FA))
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = "Active on Tab",
+                                text = accessLabel,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF34D399),
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                color = Color(0xFFD4D4D8),
+                                fontSize = 11.sp
                             )
                         }
+                    }
+
+                    Surface(
+                        onClick = onToggleAllowInPrivate,
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (extension.allowInPrivate) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color(0xFF1E1E28),
+                        border = BorderStroke(1.dp, if (extension.allowInPrivate) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else Color(0xFF2E2E3C))
+                    ) {
+                        Text(
+                            text = "Private tabs",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (extension.allowInPrivate) FontWeight.Bold else FontWeight.Medium,
+                            color = if (extension.allowInPrivate) MaterialTheme.colorScheme.primary else Color(0xFFA1A1AA),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
                     }
                 }
 
