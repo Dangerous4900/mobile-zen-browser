@@ -1569,6 +1569,10 @@ class ZenBrowserViewModel(
         }
     }
 
+    fun updateDataSaverEnabled(enabled: Boolean) {
+        updateSidebarConfig { it.copy(dataSaverEnabled = enabled) }
+    }
+
     fun updateBackgroundPlayEnabled(enabled: Boolean) {
         updateSidebarConfig { it.copy(backgroundPlayEnabled = enabled) }
     }

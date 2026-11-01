@@ -1229,6 +1229,7 @@ fun ZenWebPaneView(
                 domStorageEnabled = true
                 databaseEnabled = true
                 loadsImagesAutomatically = true
+                blockNetworkImage = currentUiState.sidebarConfig.dataSaverEnabled
                 mediaPlaybackRequiresUserGesture = false
                 javaScriptCanOpenWindowsAutomatically = false
                 allowFileAccess = false

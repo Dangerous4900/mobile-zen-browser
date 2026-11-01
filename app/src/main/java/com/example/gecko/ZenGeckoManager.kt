@@ -260,6 +260,22 @@ object ZenGeckoManager {
         targets.forEach { runCatching { it.setActive(true) } }
     }
 
+    private var dataSaverExtension: org.mozilla.geckoview.WebExtension? = null
+
+    /** Data Saver: a tiny built-in extension cancels image requests while it is installed. Takes effect on next page load. */
+    fun setDataSaver(context: Context, enabled: Boolean) {
+        val controller = getOrCreateRuntime(context).webExtensionController
+        if (enabled) {
+            if (dataSaverExtension != null) return
+            controller.ensureBuiltIn("resource://android/assets/zen-datasaver/", "datasaver@zenbrowser")
+                .accept({ ext -> dataSaverExtension = ext }, { })
+        } else {
+            val ext = dataSaverExtension ?: return
+            dataSaverExtension = null
+            controller.uninstall(ext).accept({ }, { })
+        }
+    }
+
     fun setMediaPlaying(tabId: String, playing: Boolean) {
         if (!playing) lastUserPauseAt = System.currentTimeMillis()
         val ms = activeMediaSessions[tabId] ?: activeMediaSessions.values.firstOrNull()
