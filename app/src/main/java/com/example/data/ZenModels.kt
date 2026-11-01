@@ -354,8 +354,9 @@ data class SidebarConfig(
     val fakeSearchHeadline: String = "",
     val fakeSearchSnippet: String = "",
     val backgroundPlayEnabled: Boolean = true,
+    val playInWindowPipEnabled: Boolean = false,
+    val biometricLockEnabled: Boolean = false,
     val dataSaverEnabled: Boolean = false,
-    val playInWindowPipEnabled: Boolean = true,
     // Side Panel UI Size Scale (0.75f = 75% Compact to 1.35f = 135% Large, Default 1.0f = 100%)
     val sidebarUiScale: Float = 1.0f,
     // Side Panel Blur (Default 50% = 0.5f), Opacity (Default 85% = 0.85f), Liquid Glass mode, and Side Panel Color

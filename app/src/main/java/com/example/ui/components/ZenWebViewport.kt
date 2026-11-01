@@ -1227,9 +1227,8 @@ fun ZenWebPaneView(
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
-                databaseEnabled = true
-                loadsImagesAutomatically = true
                 blockNetworkImage = currentUiState.sidebarConfig.dataSaverEnabled
+                loadsImagesAutomatically = !currentUiState.sidebarConfig.dataSaverEnabled
                 mediaPlaybackRequiresUserGesture = false
                 javaScriptCanOpenWindowsAutomatically = false
                 allowFileAccess = false
@@ -1758,6 +1757,18 @@ fun ZenWebPaneView(
                             val reqUrl = request?.url?.toString() ?: return null
                             val isMainFrame = request.isForMainFrame
                             val lowerUrl = reqUrl.lowercase()
+
+                            if (currentUiState.sidebarConfig.dataSaverEnabled && !isMainFrame) {
+                                 val acceptHeader = request.requestHeaders?.get("Accept")?.lowercase().orEmpty()
+                                 val isImage = acceptHeader.contains("image/") ||
+                                     lowerUrl.endsWith(".jpg") || lowerUrl.endsWith(".jpeg") || lowerUrl.endsWith(".png") ||
+                                     lowerUrl.endsWith(".gif") || lowerUrl.endsWith(".webp") || lowerUrl.endsWith(".svg") ||
+                                     lowerUrl.endsWith(".avif") || lowerUrl.endsWith(".ico") ||
+                                     lowerUrl.contains("/image") || lowerUrl.contains("/img")
+                                 if (isImage) {
+                                     return WebResourceResponse("image/png", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                                 }
+                             }
 
                             // Whitelist essential site media streams, CDNs, fonts, and YouTube resources so video/page loading is smooth
                             val isYoutubeAdRequest = lowerUrl.contains("youtube.com/pagead") ||

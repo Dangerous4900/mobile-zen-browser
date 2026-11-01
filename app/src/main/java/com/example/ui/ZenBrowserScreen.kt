@@ -99,6 +99,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -141,6 +142,8 @@ import com.example.ui.components.ZenSidebarPanel
 import com.example.ui.components.ZenTutorialDialog
 import com.example.ui.components.ZenWebPaneView
 import com.example.ui.components.ZenWebViewController
+import com.example.ui.components.ZenBiometricLockScreen
+import com.example.ui.components.ZenImportTabsDialog
 import com.example.data.PasswordEntity
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
@@ -281,7 +284,9 @@ private fun captureViaViewDraw(
 fun ZenBrowserScreen(
     uiState: ZenBrowserUiState,
     viewModel: ZenBrowserViewModel,
-    onEnterPip: () -> Unit = {}
+    onEnterPip: () -> Unit = {},
+    onTriggerBiometricUnlock: () -> Unit = {},
+    biometricErrorMessage: String? = null
 ) {
     val primaryWebController = remember { ZenWebViewController() }
     val secondaryWebController = remember { ZenWebViewController() }
@@ -379,8 +384,20 @@ fun ZenBrowserScreen(
         }
         com.example.ZenMediaBus.onPlayPause = onToggleMediaPlayPause
         com.example.ZenMediaBus.onStop = onDismissMediaBar
-        com.example.ZenMediaBus.onSeekTo = { ms -> withMediaController { it.seekMediaTo(ms) } }
-        com.example.ZenMediaBus.onSeekBy = { ms -> withMediaController { it.seekMediaBy(ms) } }
+        com.example.ZenMediaBus.onSeekTo = { ms ->
+            val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
+            if (tabId.isNotBlank()) {
+                com.example.gecko.ZenGeckoManager.seekMediaTo(tabId, ms)
+            }
+            withMediaController { it.seekMediaTo(ms) }
+        }
+        com.example.ZenMediaBus.onSeekBy = { ms ->
+            val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
+            if (tabId.isNotBlank()) {
+                com.example.gecko.ZenGeckoManager.seekMediaBy(tabId, ms)
+            }
+            withMediaController { it.seekMediaBy(ms) }
+        }
         com.example.ZenMediaBus.onRequestProgress = {
             withMediaController { controller ->
                 controller.queryMediaProgress { pos, dur ->
@@ -676,7 +693,6 @@ fun ZenBrowserScreen(
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
                     onDismissMediaBar = onDismissMediaBar,
-                    onEnterPip = onEnterPip,
                     onClearUnpinnedTabs = {
                         viewModel.clearBrowsingDataAndUnpinnedTabs {
                             primaryWebController.clearWebData()
@@ -728,7 +744,6 @@ fun ZenBrowserScreen(
                         },
                         onToggleReader = viewModel::toggleReaderMode,
                         onToggleDesktopMode = viewModel::toggleDesktopMode,
-                        onEnterPip = onEnterPip,
                         onOpenMediaCapture = { viewModel.openSheet(ActiveModalSheet.MEDIA_CAPTURE) },
                         onOpenAdm = { viewModel.openSheet(ActiveModalSheet.ADVANCED_DOWNLOAD_MANAGER) }
                     )
@@ -1136,7 +1151,6 @@ fun ZenBrowserScreen(
                         },
                         onToggleReader = viewModel::toggleReaderMode,
                         onToggleDesktopMode = viewModel::toggleDesktopMode,
-                        onEnterPip = onEnterPip,
                         onOpenMediaCapture = { viewModel.openSheet(ActiveModalSheet.MEDIA_CAPTURE) },
                         onOpenAdm = { viewModel.openSheet(ActiveModalSheet.ADVANCED_DOWNLOAD_MANAGER) }
                     )
@@ -1191,7 +1205,6 @@ fun ZenBrowserScreen(
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
                     onDismissMediaBar = onDismissMediaBar,
-                    onEnterPip = onEnterPip,
                     onClearUnpinnedTabs = {
                         viewModel.clearBrowsingDataAndUnpinnedTabs {
                             primaryWebController.clearWebData()
@@ -1289,7 +1302,6 @@ fun ZenBrowserScreen(
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
                     onDismissMediaBar = onDismissMediaBar,
-                    onEnterPip = onEnterPip,
                     onClearUnpinnedTabs = {
                         viewModel.clearBrowsingDataAndUnpinnedTabs {
                             primaryWebController.clearWebData()
@@ -1416,7 +1428,6 @@ fun ZenBrowserScreen(
                     onUpdateSwitchToNewTabImmediately = viewModel::updateSwitchToNewTabImmediately,
                     onUpdateNewTabPosition = viewModel::updateNewTabPosition,
                     onUpdateNotificationSettings = viewModel::updateNotificationSettings,
-                    onUpdateDataSaver = viewModel::updateDataSaverEnabled,
                     onUpdateFakeSearchConfig = { aiText, trigger, headline, snippet ->
                         viewModel.updateFakeSearchConfig(
                             customAiOverviewText = aiText,
@@ -1430,6 +1441,9 @@ fun ZenBrowserScreen(
                     },
                     onUpdateHistoryDeletionInterval = viewModel::updateHistoryDeletionInterval,
                     onUpdateHorizontalSwipeMode = viewModel::updateHorizontalSwipeMode,
+                    onUpdateBiometricLockEnabled = viewModel::updateBiometricLockEnabled,
+                    onUpdateDataSaverEnabled = viewModel::updateDataSaverEnabled,
+                    onOpenImportTabs = { viewModel.setImportTabsDialogVisible(true) },
                     onResetDefaults = viewModel::resetSidebarDefaults
                 )
             }
@@ -1720,6 +1734,24 @@ fun ZenBrowserScreen(
                 }
             )
         }
+
+        if (uiState.isImportTabsDialogVisible) {
+            ZenImportTabsDialog(
+                workspaces = uiState.workspaces,
+                activeWorkspaceId = uiState.activeWorkspaceId,
+                onDismiss = { viewModel.setImportTabsDialogVisible(false) },
+                onImportTabs = { tabs, targetWsId, switchToFirst ->
+                    viewModel.importTabs(tabs, targetWsId, switchToFirst)
+                }
+            )
+        }
+
+        if (uiState.isAppLocked) {
+            ZenBiometricLockScreen(
+                onTriggerUnlock = onTriggerBiometricUnlock,
+                errorMessage = biometricErrorMessage
+            )
+        }
     }
 }
 
@@ -1901,7 +1933,6 @@ private fun FirefoxToolbar(
     onOpenExtensionPopup: (com.example.data.FirefoxExtensionEntity) -> Unit = {},
     onToggleReader: () -> Unit,
     onToggleDesktopMode: () -> Unit = {},
-    onEnterPip: () -> Unit = {},
     onOpenMediaCapture: () -> Unit = {},
     onOpenAdm: () -> Unit = {}
 ) {
@@ -2212,22 +2243,6 @@ private fun FirefoxToolbar(
                             imageVector = Icons.Default.DesktopWindows,
                             contentDescription = if (isDesktop) "Desktop Site: Active (Tap for Mobile)" else "Request Desktop Site",
                             tint = if (isDesktop) Color(0xFF60A5FA) else Color(0xFFD4D4D8),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-
-                if (uiState.mediaPlaybackState.isActive || uiState.sidebarConfig.playInWindowPipEnabled) {
-                    IconButton(
-                        onClick = onEnterPip,
-                        modifier = Modifier
-                            .size(34.dp)
-                            .testTag("toolbar_pip_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PictureInPicture,
-                            contentDescription = "Play in window (PiP)",
-                            tint = if (uiState.mediaPlaybackState.isPlaying) Color(0xFF60A5FA) else Color(0xFFD4D4D8),
                             modifier = Modifier.size(18.dp)
                         )
                     }

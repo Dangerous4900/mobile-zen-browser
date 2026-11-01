@@ -49,8 +49,20 @@ object ZenGeckoManager {
                             .build()
                     )
                     .build()
-                GeckoRuntime.create(context.applicationContext, settings).also {
-                    runtime = it
+                GeckoRuntime.create(context.applicationContext, settings).also { rt ->
+                    runtime = rt
+                    try {
+                        rt.webExtensionController.ensureBuiltIn(
+                            "resource://android/assets/extensions/video_bg_play/",
+                            "video-bg-play@zenbrowser.com"
+                        ).accept({ }, { })
+                    } catch (_: Throwable) {
+                        try {
+                            rt.webExtensionController.installBuiltIn(
+                                "resource://android/assets/extensions/video_bg_play/"
+                            ).accept({ }, { })
+                        } catch (_: Throwable) {}
+                    }
                 }
             }
         }
@@ -74,7 +86,20 @@ object ZenGeckoManager {
                 .build()
             val session = GeckoSession(settings)
             session.open(getOrCreateRuntime(context))
+            try {
+                session.setActive(true)
+            } catch (_: Throwable) {}
             session
+        }
+    }
+
+    fun keepBackgroundSessionsActive() {
+        sessionPool.values.forEach { s ->
+            if (s.isOpen) {
+                try {
+                    s.setActive(true)
+                } catch (_: Throwable) {}
+            }
         }
     }
 
@@ -194,12 +219,6 @@ object ZenGeckoManager {
 
             override fun onPause(s: GeckoSession, mediaSession: MediaSession) {
                 activeMediaSessions[tabId] = mediaSession
-                val now = System.currentTimeMillis()
-                if (now < pipKeepPlayingUntil && now - lastUserPauseAt > 1200L) {
-                    // Automatic pause caused by entering PiP, not by the user: undo it and keep reporting "playing".
-                    runCatching { s.setActive(true); mediaSession.play() }
-                    return
-                }
                 callback.onMediaStateChange(isActive = true, isPlaying = false, title = currentTitle ?: "Media")
             }
 
@@ -249,32 +268,7 @@ object ZenGeckoManager {
         }
     }
 
-    /** While now < this, a pause the page/engine did on its own (window shrank, lost focus) is undone. */
-    @Volatile var pipKeepPlayingUntil = 0L
     @Volatile private var lastUserPauseAt = 0L
-
-    fun holdPlaybackForPip(tabId: String? = null, durationMs: Long = 6000L) {
-        pipKeepPlayingUntil = System.currentTimeMillis() + durationMs
-        // Only the playing tab: activating every background session would wake them all up.
-        val targets = if (!tabId.isNullOrBlank()) listOfNotNull(sessionPool[tabId]) else activeMediaSessions.keys.mapNotNull { sessionPool[it] }
-        targets.forEach { runCatching { it.setActive(true) } }
-    }
-
-    private var dataSaverExtension: org.mozilla.geckoview.WebExtension? = null
-
-    /** Data Saver: a tiny built-in extension cancels image requests while it is installed. Takes effect on next page load. */
-    fun setDataSaver(context: Context, enabled: Boolean) {
-        val controller = getOrCreateRuntime(context).webExtensionController
-        if (enabled) {
-            if (dataSaverExtension != null) return
-            controller.ensureBuiltIn("resource://android/assets/zen-datasaver/", "datasaver@zenbrowser")
-                .accept({ ext -> dataSaverExtension = ext }, { })
-        } else {
-            val ext = dataSaverExtension ?: return
-            dataSaverExtension = null
-            controller.uninstall(ext).accept({ }, { })
-        }
-    }
 
     fun setMediaPlaying(tabId: String, playing: Boolean) {
         if (!playing) lastUserPauseAt = System.currentTimeMillis()
@@ -328,6 +322,39 @@ object ZenGeckoManager {
                 onComplete(false, error?.message)
             }
         )
+    }
+
+    @Volatile
+    private var isDataSaverActive = false
+
+    fun setDataSaver(context: Context, enabled: Boolean) {
+        isDataSaverActive = enabled
+        val rt = getOrCreateRuntime(context)
+        if (enabled) {
+            try {
+                rt.webExtensionController.ensureBuiltIn(
+                    "resource://android/assets/zen-datasaver/",
+                    "datasaver@zenbrowser"
+                ).accept({ }, { })
+            } catch (_: Throwable) {
+                try {
+                    rt.webExtensionController.installBuiltIn(
+                        "resource://android/assets/zen-datasaver/"
+                    ).accept({ }, { })
+                } catch (_: Throwable) {}
+            }
+        } else {
+            try {
+                rt.webExtensionController.ensureBuiltIn(
+                    "resource://android/assets/zen-datasaver/",
+                    "datasaver@zenbrowser"
+                ).accept({ ext ->
+                    if (ext != null) {
+                        rt.webExtensionController.uninstall(ext)
+                    }
+                }, { })
+            } catch (_: Throwable) {}
+        }
     }
 
     fun destroyAll() {

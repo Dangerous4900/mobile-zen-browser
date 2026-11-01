@@ -298,13 +298,15 @@ fun SidebarCustomizationStudioSheet(
     onUpdateSwitchToNewTabImmediately: (Boolean) -> Unit = {},
     onUpdateNewTabPosition: (NewTabPosition) -> Unit = {},
     onUpdateNotificationSettings: (showTabCloseNotification: Boolean?, showActionNotifications: Boolean?) -> Unit = { _, _ -> },
-    onUpdateDataSaver: (Boolean) -> Unit = {},
     onUpdateFakeSearchConfig: (overviewText: String?, trigger: String?, headline: String?, snippet: String?) -> Unit = { _, _, _, _ -> },
     onOpenFakeSearch: (String) -> Unit = {},
     onUpdateHistoryDeletionInterval: (HistoryDeletionInterval) -> Unit = {},
     onToggleTopToolItem: (TopToolbarToolItem, Boolean) -> Unit = { _, _ -> },
     onMoveTopToolItem: (TopToolbarToolItem, Int) -> Unit = { _, _ -> },
     onUpdateHorizontalSwipeMode: (HorizontalSwipeNavigationMode) -> Unit = {},
+    onUpdateBiometricLockEnabled: (Boolean) -> Unit = {},
+    onUpdateDataSaverEnabled: (Boolean) -> Unit = {},
+    onOpenImportTabs: () -> Unit = {},
     onResetDefaults: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -800,7 +802,7 @@ fun SidebarCustomizationStudioSheet(
                         title = "Data saver",
                         subtitle = "Don't load images on websites to use less data. Reload a page after changing this.",
                         checked = cfg.dataSaverEnabled,
-                        onCheckedChange = onUpdateDataSaver,
+                        onCheckedChange = onUpdateDataSaverEnabled,
                         testTag = "toggle_data_saver"
                     )
                 }
@@ -1462,6 +1464,63 @@ fun SidebarCustomizationStudioSheet(
                             },
                             valueRange = 1f..24f
                         )
+                    }
+                }
+            }
+
+            // Security & Biometric Lock
+            if (matchesSearch("biometric", "lock", "fingerprint", "face", "pin", "security", "protect")) {
+                item {
+                    SectionCard(title = "SECURITY & BIOMETRIC APP LOCK") {
+                        SettingSwitchRow(
+                            title = "Lock Browser with Biometrics / PIN",
+                            subtitle = "Require fingerprint, face unlock, or device PIN to access Zen Browser when opening the app",
+                            checked = cfg.biometricLockEnabled,
+                            onCheckedChange = onUpdateBiometricLockEnabled,
+                            testTag = "toggle_biometric_lock"
+                        )
+                    }
+                }
+            }
+
+            // Tab Migration & Import
+            if (matchesSearch("import", "tabs", "bookmark", "chrome", "firefox", "brave", "edge", "safari", "migration")) {
+                item {
+                    SectionCard(title = "MIGRATION & TAB IMPORT") {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "Import from External Browsers",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFF4F4F6)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Import tabs and bookmarks from Google Chrome, Firefox, Brave, Edge, Safari (HTML export), OneTab or text session lists directly into your workspaces.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFA1A1AA)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = onOpenImportTabs,
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF2563EB),
+                                    contentColor = Color.White
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("button_open_import_tabs")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Import Tabs from Another Browser")
+                            }
+                        }
                     }
                 }
             }

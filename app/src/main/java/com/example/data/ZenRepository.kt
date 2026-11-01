@@ -66,8 +66,9 @@ class ZenRepository(
         val FAKE_SEARCH_HEADLINE = stringPreferencesKey("fake_search_headline")
         val FAKE_SEARCH_SNIPPET = stringPreferencesKey("fake_search_snippet")
         val BACKGROUND_PLAY_ENABLED = booleanPreferencesKey("background_play_enabled")
-        val DATA_SAVER_ENABLED = booleanPreferencesKey("data_saver_enabled")
         val PLAY_IN_WINDOW_PIP_ENABLED = booleanPreferencesKey("play_in_window_pip_enabled")
+        val BIOMETRIC_LOCK_ENABLED = booleanPreferencesKey("biometric_lock_enabled")
+        val DATA_SAVER_ENABLED = booleanPreferencesKey("data_saver_enabled")
         val SIDEBAR_UI_SCALE = floatPreferencesKey("sidebar_ui_scale")
 
         val TAB_SWIPE_RIGHT = stringPreferencesKey("tab_swipe_right")
@@ -223,8 +224,9 @@ class ZenRepository(
             fakeSearchHeadline = prefs[Keys.FAKE_SEARCH_HEADLINE] ?: "",
             fakeSearchSnippet = prefs[Keys.FAKE_SEARCH_SNIPPET] ?: "",
             backgroundPlayEnabled = prefs[Keys.BACKGROUND_PLAY_ENABLED] ?: true,
+            playInWindowPipEnabled = prefs[Keys.PLAY_IN_WINDOW_PIP_ENABLED] ?: false,
+            biometricLockEnabled = prefs[Keys.BIOMETRIC_LOCK_ENABLED] ?: false,
             dataSaverEnabled = prefs[Keys.DATA_SAVER_ENABLED] ?: false,
-            playInWindowPipEnabled = prefs[Keys.PLAY_IN_WINDOW_PIP_ENABLED] ?: true,
             sectionOrder = parsedOrder ?: SidebarConfig().sectionOrder,
             enabledSidebarTools = parsedTools ?: SidebarConfig().enabledSidebarTools,
             enabledTopToolbarTools = parsedTopTools ?: SidebarConfig().enabledTopToolbarTools
@@ -308,8 +310,9 @@ class ZenRepository(
             prefs[Keys.FAKE_SEARCH_HEADLINE] = config.fakeSearchHeadline
             prefs[Keys.FAKE_SEARCH_SNIPPET] = config.fakeSearchSnippet
             prefs[Keys.BACKGROUND_PLAY_ENABLED] = config.backgroundPlayEnabled
-            prefs[Keys.DATA_SAVER_ENABLED] = config.dataSaverEnabled
             prefs[Keys.PLAY_IN_WINDOW_PIP_ENABLED] = config.playInWindowPipEnabled
+            prefs[Keys.BIOMETRIC_LOCK_ENABLED] = config.biometricLockEnabled
+            prefs[Keys.DATA_SAVER_ENABLED] = config.dataSaverEnabled
             prefs[Keys.SECTION_ORDER] = config.sectionOrder.joinToString(",") { it.id }
             prefs[Keys.ENABLED_SIDEBAR_TOOLS] = config.enabledSidebarTools.joinToString(",") { it.id }
             prefs[Keys.ENABLED_TOP_TOOLBAR_TOOLS] = config.enabledTopToolbarTools.joinToString(",") { it.id }

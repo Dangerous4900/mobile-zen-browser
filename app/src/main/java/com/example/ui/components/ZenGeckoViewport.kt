@@ -52,9 +52,20 @@ fun ZenGeckoViewPort(
             controller.geckoSession = geckoSession
             controller.activeTabId = tab.id
         }
+        try {
+            geckoSession.setActive(true)
+        } catch (_: Throwable) {}
         onDispose {
             if (controller.activeTabId == tab.id) {
                 controller.geckoSession = null
+            }
+            // Keep background session active so media playback continues when switching tabs
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (geckoSession.isOpen) {
+                    try {
+                        geckoSession.setActive(true)
+                    } catch (_: Throwable) {}
+                }
             }
         }
     }
@@ -177,6 +188,9 @@ fun ZenGeckoViewPort(
             if (gv.session != geckoSession) {
                 gv.setSession(geckoSession)
             }
+            try {
+                geckoSession.setActive(true)
+            } catch (_: Throwable) {}
         },
         modifier = modifier
             .fillMaxSize()

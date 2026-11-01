@@ -257,7 +257,6 @@ fun ZenSidebarPanel(
     onToggleMediaPlayPause: () -> Unit,
     onToggleMediaMute: () -> Unit = {},
     onDismissMediaBar: () -> Unit,
-    onEnterPip: () -> Unit = {},
     onClearUnpinnedTabs: () -> Unit,
     onClearAllHistory: () -> Unit = {},
     onDeleteHistoryEntry: (String) -> Unit = {},
@@ -266,8 +265,6 @@ fun ZenSidebarPanel(
     softwareBlurredBackdrop: ImageBitmap? = null,
     modifier: Modifier = Modifier
 ) {
-    if (uiState.isInPictureInPictureMode) return
-
     val sidebarCfg = uiState.sidebarConfig
     val enabledTools = sidebarCfg.enabledSidebarTools
     val uiScale = sidebarCfg.sidebarUiScale.coerceIn(0.75f, 1.35f)
@@ -1293,8 +1290,7 @@ fun ZenSidebarPanel(
                             onSelectTab(uiState.mediaPlaybackState.tabId)
                         }
                     },
-                    onDismissMediaBar = onDismissMediaBar,
-                    onEnterPip = onEnterPip
+                    onDismissMediaBar = onDismissMediaBar
                 )
             }
             }
@@ -2002,8 +1998,7 @@ private fun SidebarBottomFooterBar(
     onToggleMediaPlayPause: () -> Unit,
     onToggleMediaMute: () -> Unit = {},
     onSelectMediaTab: () -> Unit,
-    onDismissMediaBar: () -> Unit,
-    onEnterPip: () -> Unit = {}
+    onDismissMediaBar: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -2100,24 +2095,6 @@ private fun SidebarBottomFooterBar(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color.White.copy(alpha = 0.1f)
-                        ) {
-                            IconButton(
-                                onClick = onEnterPip,
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .testTag("sidebar_media_pip_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PictureInPicture,
-                                    contentDescription = "Play in window",
-                                    tint = Color(0xFFF4F4F6),
-                                    modifier = Modifier.size(15.dp)
-                                )
-                            }
-                        }
                         Surface(
                             shape = CircleShape,
                             color = if (mediaPlaybackState.isPlaying) Color(0xFF2563EB) else Color.White.copy(alpha = 0.16f)

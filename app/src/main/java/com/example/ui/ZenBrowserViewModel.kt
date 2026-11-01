@@ -114,6 +114,8 @@ data class ZenBrowserUiState(
     val findInPageQuery: String = "",
     val isFindInPageVisible: Boolean = false,
     val isInPictureInPictureMode: Boolean = false,
+    val isAppLocked: Boolean = false,
+    val isImportTabsDialogVisible: Boolean = false,
     val statusBannerMessage: String? = null,
     val desktopModeTabIds: Set<String> = emptySet(),
     val searchSuggestions: List<com.example.data.SearchSuggestionItem> = emptyList()
@@ -311,6 +313,8 @@ private data class TransientSessionState(
     val findInPageQuery: String = "",
     val isFindInPageVisible: Boolean = false,
     val isInPictureInPictureMode: Boolean = false,
+    val isAppLocked: Boolean = false,
+    val isImportTabsDialogVisible: Boolean = false,
     val statusBannerMessage: String? = null,
     val desktopModeTabIds: Set<String> = emptySet(),
     val searchSuggestions: List<com.example.data.SearchSuggestionItem> = emptyList()
@@ -424,7 +428,9 @@ class ZenBrowserViewModel(
             canGoForward = session.canGoForward,
             findInPageQuery = session.findInPageQuery,
             isFindInPageVisible = session.isFindInPageVisible,
-            isInPictureInPictureMode = session.isInPictureInPictureMode,
+            isInPictureInPictureMode = false,
+            isAppLocked = session.isAppLocked,
+            isImportTabsDialogVisible = session.isImportTabsDialogVisible,
             statusBannerMessage = session.statusBannerMessage,
             desktopModeTabIds = session.desktopModeTabIds,
             searchSuggestions = session.searchSuggestions
@@ -446,6 +452,10 @@ class ZenBrowserViewModel(
         val now = System.currentTimeMillis()
         val elapsedMillis = now - cfg.lastSessionTimestamp
         val thresholdMillis = cfg.homepageAfterHoursThreshold * 3600_000L
+
+        if (cfg.biometricLockEnabled) {
+            sessionState.update { it.copy(isAppLocked = true) }
+        }
 
         if (!cfg.hasCompletedTutorial) {
             sessionState.update { it.copy(showTutorialDialog = true) }
@@ -546,16 +556,15 @@ class ZenBrowserViewModel(
     }
 
     fun toggleSidebar() {
-        if (sessionState.value.isInPictureInPictureMode) return
         if (!sessionState.value.isSidebarOpen && System.currentTimeMillis() < suppressSidebarOpenUntil) return
         sessionState.update { it.copy(isSidebarOpen = !it.isSidebarOpen) }
     }
 
     private var suppressSidebarOpenUntil = 0L
 
-    /** Single gate for every path that opens the side panel: never during/around PiP or while leaving the app. */
+    /** Single gate for every path that opens the side panel. */
     private fun canOpenSidebarNow(): Boolean =
-        !sessionState.value.isInPictureInPictureMode && System.currentTimeMillis() >= suppressSidebarOpenUntil
+        System.currentTimeMillis() >= suppressSidebarOpenUntil
 
     /** Called when the user starts leaving the app (home/PiP gesture): stray gesture events must not open the panel. */
     fun onLeavingApp() {
@@ -752,6 +761,7 @@ class ZenBrowserViewModel(
                 )
             }
         }
+        com.example.gecko.ZenGeckoManager.keepBackgroundSessionsActive()
     }
 
     fun toggleTabForSplitSelection(tabId: String) {
@@ -1557,20 +1567,76 @@ class ZenBrowserViewModel(
     }
 
     fun setPictureInPictureMode(inPip: Boolean) {
-        suppressSidebarOpenUntil = System.currentTimeMillis() + 2500L
-        sessionState.update {
-            it.copy(
-                isInPictureInPictureMode = inPip,
-                isSidebarOpen = false,
-                activeSheet = if (inPip) ActiveModalSheet.NONE else it.activeSheet,
-                isCenterTopSearchPopupVisible = if (inPip) false else it.isCenterTopSearchPopupVisible,
-                requestSidebarSearchFocus = false
-            )
+        // PiP has been completely removed per user request
+    }
+
+    fun setAppLocked(locked: Boolean) {
+        sessionState.update { it.copy(isAppLocked = locked) }
+    }
+
+    fun updateBiometricLockEnabled(enabled: Boolean) {
+        updateSidebarConfig { it.copy(biometricLockEnabled = enabled) }
+        if (!enabled) {
+            setAppLocked(false)
         }
     }
 
     fun updateDataSaverEnabled(enabled: Boolean) {
         updateSidebarConfig { it.copy(dataSaverEnabled = enabled) }
+    }
+
+    fun setImportTabsDialogVisible(visible: Boolean) {
+        sessionState.update { it.copy(isImportTabsDialogVisible = visible) }
+    }
+
+    fun importTabs(
+        tabs: List<com.example.tabs.ImportedTab>,
+        targetWorkspaceId: String? = null,
+        switchToFirst: Boolean = false
+    ) {
+        if (tabs.isEmpty()) return
+        viewModelScope.launch {
+            val targetWsId = targetWorkspaceId ?: uiState.value.activeWorkspaceId
+            var firstTabId: String? = null
+            var currentSort = calculateNewTabSortOrder()
+            for ((index, imp) in tabs.withIndex()) {
+                val sanitized = ZenPrivacyEngine.resolveInputToUrl(
+                    rawInput = imp.url,
+                    privacyConfig = uiState.value.privacyConfig,
+                    isPrivateContext = false,
+                    customEngines = uiState.value.customSearchEngines,
+                    fakeSearchTrigger = uiState.value.sidebarConfig.fakeSearchQueryTrigger
+                )
+                val tabId = "tab_${UUID.randomUUID().toString().take(8)}"
+                if (index == 0) firstTabId = tabId
+                val tab = TabEntity(
+                    id = tabId,
+                    workspaceId = targetWsId,
+                    title = imp.title.ifBlank { ZenPrivacyEngine.extractHostDisplay(sanitized.finalUrl) },
+                    url = sanitized.finalUrl,
+                    isPinned = false,
+                    isEssential = false,
+                    isPrivate = false,
+                    sortOrder = currentSort++,
+                    lastAccessed = System.currentTimeMillis()
+                )
+                repository.insertTab(tab)
+            }
+            sessionState.update { sess ->
+                if (switchToFirst && firstTabId != null) {
+                    sess.copy(
+                        activeTabId = firstTabId,
+                        isImportTabsDialogVisible = false,
+                        statusBannerMessage = "Imported ${tabs.size} tabs"
+                    )
+                } else {
+                    sess.copy(
+                        isImportTabsDialogVisible = false,
+                        statusBannerMessage = "Imported ${tabs.size} tabs"
+                    )
+                }
+            }
+        }
     }
 
     fun updateBackgroundPlayEnabled(enabled: Boolean) {
