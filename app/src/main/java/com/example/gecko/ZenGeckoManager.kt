@@ -253,9 +253,11 @@ object ZenGeckoManager {
     @Volatile var pipKeepPlayingUntil = 0L
     @Volatile private var lastUserPauseAt = 0L
 
-    fun holdPlaybackForPip(durationMs: Long = 6000L) {
+    fun holdPlaybackForPip(tabId: String? = null, durationMs: Long = 6000L) {
         pipKeepPlayingUntil = System.currentTimeMillis() + durationMs
-        sessionPool.values.forEach { runCatching { it.setActive(true) } }
+        // Only the playing tab: activating every background session would wake them all up.
+        val targets = if (!tabId.isNullOrBlank()) listOfNotNull(sessionPool[tabId]) else activeMediaSessions.keys.mapNotNull { sessionPool[it] }
+        targets.forEach { runCatching { it.setActive(true) } }
     }
 
     fun setMediaPlaying(tabId: String, playing: Boolean) {

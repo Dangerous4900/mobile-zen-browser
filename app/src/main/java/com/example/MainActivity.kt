@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
     /** GeckoView/WebView can pause the page when the window shrinks; keep nudging playback until it sticks. */
     private fun resumeMediaSoon() {
         if (!resumeMediaAfterPip) return
-        com.example.gecko.ZenGeckoManager.holdPlaybackForPip()
+        com.example.gecko.ZenGeckoManager.holdPlaybackForPip(viewModelRef?.uiState?.value?.mediaPlaybackState?.tabId)
         listOf(100L, 400L, 900L, 1800L, 3000L).forEach { delayMs ->
             mainHandler.postDelayed({
                 if (!resumeMediaAfterPip) return@postDelayed
@@ -226,7 +226,7 @@ class MainActivity : ComponentActivity() {
         val pipEnabled = state.sidebarConfig.playInWindowPipEnabled
         if (canUsePip() && !isInPictureInPictureMode && media.isPlaying && pipEnabled) {
             resumeMediaAfterPip = true
-            com.example.gecko.ZenGeckoManager.holdPlaybackForPip()
+            com.example.gecko.ZenGeckoManager.holdPlaybackForPip(viewModelRef?.uiState?.value?.mediaPlaybackState?.tabId)
             viewModelRef?.setSidebarOpen(false)
             pipWindow = true
             viewModelRef?.setPictureInPictureMode(true)
@@ -313,7 +313,7 @@ class MainActivity : ComponentActivity() {
         val browserViewModel = viewModelRef ?: return false
         browserViewModel.onLeavingApp()
         resumeMediaAfterPip = browserViewModel.uiState.value.mediaPlaybackState.isPlaying
-        if (resumeMediaAfterPip) com.example.gecko.ZenGeckoManager.holdPlaybackForPip()
+        if (resumeMediaAfterPip) com.example.gecko.ZenGeckoManager.holdPlaybackForPip(viewModelRef?.uiState?.value?.mediaPlaybackState?.tabId)
         pipWindow = true
         browserViewModel.setPictureInPictureMode(true)
         return try {
@@ -340,7 +340,7 @@ class MainActivity : ComponentActivity() {
             viewModelRef?.onLeavingApp()
             if (viewModelRef?.uiState?.value?.mediaPlaybackState?.isPlaying == true) {
                 resumeMediaAfterPip = true
-                com.example.gecko.ZenGeckoManager.holdPlaybackForPip()
+                com.example.gecko.ZenGeckoManager.holdPlaybackForPip(viewModelRef?.uiState?.value?.mediaPlaybackState?.tabId)
             }
             pipWindow = true
             viewModelRef?.setSidebarOpen(false)
