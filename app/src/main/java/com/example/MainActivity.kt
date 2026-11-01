@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
     /** GeckoView/WebView can pause the page when the window shrinks; keep nudging playback until it sticks. */
     private fun resumeMediaSoon() {
         if (!resumeMediaAfterPip) return
+        com.example.gecko.ZenGeckoManager.holdPlaybackForPip()
         listOf(100L, 400L, 900L, 1800L, 3000L).forEach { delayMs ->
             mainHandler.postDelayed({
                 if (!resumeMediaAfterPip) return@postDelayed
@@ -150,7 +151,9 @@ class MainActivity : ComponentActivity() {
                 // The window's real PiP state is Compose snapshot state set synchronously from the
                 // Activity callbacks, so the PiP layout can never lag behind the ViewModel flow.
                 val winCfg = androidx.compose.ui.platform.LocalConfiguration.current
-                val tinyWindow = winCfg.screenHeightDp < 260 || winCfg.screenWidthDp < 240
+                // PiP windows are small and wide (16:9); a portrait phone/split pane is never wider than tall-ish.
+                val tinyWindow = winCfg.screenHeightDp < 260 || winCfg.screenWidthDp < 240 ||
+                    (winCfg.screenWidthDp < 520 && winCfg.screenHeightDp < winCfg.screenWidthDp * 0.75f)
                 val screenState = if (pipWindow || tinyWindow) {
                     uiState.copy(isInPictureInPictureMode = true, isSidebarOpen = false)
                 } else {
@@ -223,6 +226,7 @@ class MainActivity : ComponentActivity() {
         val pipEnabled = state.sidebarConfig.playInWindowPipEnabled
         if (canUsePip() && !isInPictureInPictureMode && media.isPlaying && pipEnabled) {
             resumeMediaAfterPip = true
+            com.example.gecko.ZenGeckoManager.holdPlaybackForPip()
             viewModelRef?.setSidebarOpen(false)
             pipWindow = true
             viewModelRef?.setPictureInPictureMode(true)
@@ -309,6 +313,7 @@ class MainActivity : ComponentActivity() {
         val browserViewModel = viewModelRef ?: return false
         browserViewModel.onLeavingApp()
         resumeMediaAfterPip = browserViewModel.uiState.value.mediaPlaybackState.isPlaying
+        if (resumeMediaAfterPip) com.example.gecko.ZenGeckoManager.holdPlaybackForPip()
         pipWindow = true
         browserViewModel.setPictureInPictureMode(true)
         return try {
@@ -333,7 +338,10 @@ class MainActivity : ComponentActivity() {
         super.onPictureInPictureUiStateChanged(pipState)
         if (pipState.isTransitioningToPip) {
             viewModelRef?.onLeavingApp()
-            if (viewModelRef?.uiState?.value?.mediaPlaybackState?.isPlaying == true) resumeMediaAfterPip = true
+            if (viewModelRef?.uiState?.value?.mediaPlaybackState?.isPlaying == true) {
+                resumeMediaAfterPip = true
+                com.example.gecko.ZenGeckoManager.holdPlaybackForPip()
+            }
             pipWindow = true
             viewModelRef?.setSidebarOpen(false)
             viewModelRef?.setPictureInPictureMode(true)
