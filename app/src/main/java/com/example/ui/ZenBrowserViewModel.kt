@@ -553,6 +553,10 @@ class ZenBrowserViewModel(
 
     private var suppressSidebarOpenUntil = 0L
 
+    /** Single gate for every path that opens the side panel: never during/around PiP or while leaving the app. */
+    private fun canOpenSidebarNow(): Boolean =
+        !sessionState.value.isInPictureInPictureMode && System.currentTimeMillis() >= suppressSidebarOpenUntil
+
     /** Called when the user starts leaving the app (home/PiP gesture): stray gesture events must not open the panel. */
     fun onLeavingApp() {
         suppressSidebarOpenUntil = System.currentTimeMillis() + 1500L
@@ -560,7 +564,7 @@ class ZenBrowserViewModel(
     }
 
     fun setSidebarOpen(open: Boolean) {
-        if (open && (sessionState.value.isInPictureInPictureMode || System.currentTimeMillis() < suppressSidebarOpenUntil)) return
+        if (open && !canOpenSidebarNow()) return
         sessionState.update {
             it.copy(
                 isSidebarOpen = open,
@@ -618,8 +622,8 @@ class ZenBrowserViewModel(
                     sessionState.update {
                         it.copy(
                             activeTabId = newTab.id,
-                            isSidebarOpen = true,
-                            requestSidebarSearchFocus = true
+                            isSidebarOpen = canOpenSidebarNow(),
+                            requestSidebarSearchFocus = canOpenSidebarNow()
                         )
                     }
                 }
@@ -1871,7 +1875,7 @@ class ZenBrowserViewModel(
         val initialSelection = listOfNotNull(state.activePrimaryTab?.id)
         sessionState.update {
             it.copy(
-                isSidebarOpen = true,
+                isSidebarOpen = canOpenSidebarNow(),
                 isSelectingSplitTabs = true,
                 selectedSplitTabIds = initialSelection,
                 activeSheet = ActiveModalSheet.NONE,

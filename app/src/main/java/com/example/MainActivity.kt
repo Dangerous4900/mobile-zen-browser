@@ -33,6 +33,27 @@ class MainActivity : ComponentActivity() {
     private var viewModelRef: ZenBrowserViewModel? = null
     private var pipWindow by androidx.compose.runtime.mutableStateOf(false)
     private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var resumeMediaAfterPip = false
+
+    /** GeckoView/WebView can pause the page when the window shrinks; keep nudging playback until it sticks. */
+    private fun resumeMediaSoon() {
+        if (!resumeMediaAfterPip) return
+        listOf(100L, 400L, 900L, 1800L, 3000L).forEach { delayMs ->
+            mainHandler.postDelayed({
+                if (!resumeMediaAfterPip) return@postDelayed
+                val st = viewModelRef?.uiState?.value ?: return@postDelayed
+                val id = st.mediaPlaybackState.tabId.ifBlank { st.focusedTab?.id.orEmpty() }
+                if (id.isNotBlank()) {
+                    com.example.gecko.ZenGeckoManager.setMediaPlaying(id, true)
+                    com.example.ui.components.ZenWebViewManager.get(id)?.let { wv ->
+                        wv.resumeTimers()
+                        wv.evaluateJavascript("document.querySelectorAll('video,audio').forEach(function(m){if(m.paused&&!m.ended){m.play().catch(function(){});}})", null)
+                    }
+                }
+            }, delayMs)
+        }
+    }
 
     private val database: ZenDatabase by lazy {
         Room.databaseBuilder(
@@ -180,7 +201,15 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {}
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Entering PiP pauses the activity; make sure nothing can pop the panel open meanwhile.
+        if (isInPictureInPictureMode || pipWindow) viewModelRef?.setSidebarOpen(false)
+        if (resumeMediaAfterPip) resumeMediaSoon()
+    }
+
     override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
         if (isFinishing) ZenMediaService.stop(applicationContext)
         super.onDestroy()
         releaseWakeLock()
@@ -188,10 +217,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        viewModelRef?.onLeavingApp()
         val state = viewModelRef?.uiState?.value ?: return
         val media = state.mediaPlaybackState
         val pipEnabled = state.sidebarConfig.playInWindowPipEnabled
         if (canUsePip() && !isInPictureInPictureMode && media.isPlaying && pipEnabled) {
+            resumeMediaAfterPip = true
             viewModelRef?.setSidebarOpen(false)
             pipWindow = true
             viewModelRef?.setPictureInPictureMode(true)
@@ -276,7 +307,8 @@ class MainActivity : ComponentActivity() {
     fun enterPipManual(): Boolean {
         if (!canUsePip() || isInPictureInPictureMode) return false
         val browserViewModel = viewModelRef ?: return false
-        browserViewModel.setSidebarOpen(false)
+        browserViewModel.onLeavingApp()
+        resumeMediaAfterPip = browserViewModel.uiState.value.mediaPlaybackState.isPlaying
         pipWindow = true
         browserViewModel.setPictureInPictureMode(true)
         return try {
@@ -300,6 +332,8 @@ class MainActivity : ComponentActivity() {
     override fun onPictureInPictureUiStateChanged(pipState: android.app.PictureInPictureUiState) {
         super.onPictureInPictureUiStateChanged(pipState)
         if (pipState.isTransitioningToPip) {
+            viewModelRef?.onLeavingApp()
+            if (viewModelRef?.uiState?.value?.mediaPlaybackState?.isPlaying == true) resumeMediaAfterPip = true
             pipWindow = true
             viewModelRef?.setSidebarOpen(false)
             viewModelRef?.setPictureInPictureMode(true)
@@ -328,6 +362,8 @@ class MainActivity : ComponentActivity() {
         viewModelRef?.setPictureInPictureMode(isInPictureInPictureMode)
         // Always ensure sidebar is kept closed during PiP and when maximizing from PiP
         viewModelRef?.setSidebarOpen(false)
+        resumeMediaSoon()
+        if (!isInPictureInPictureMode) mainHandler.postDelayed({ resumeMediaAfterPip = false }, 3500L)
         val curMedia = viewModelRef?.uiState?.value?.mediaPlaybackState
         if (curMedia?.isPlaying == true) {
             val activeTabId = curMedia.tabId.ifBlank {
