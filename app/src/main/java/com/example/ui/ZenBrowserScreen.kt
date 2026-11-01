@@ -411,6 +411,15 @@ fun ZenBrowserScreen(
         }
     }
 
+    val dataSaverOn = uiState.sidebarConfig.dataSaverEnabled
+    val appContext = LocalContext.current.applicationContext
+    LaunchedEffect(dataSaverOn) {
+        com.example.gecko.ZenGeckoManager.setDataSaver(appContext, dataSaverOn)
+        com.example.ui.components.ZenWebViewManager.getAllWebViews().values.forEach { wv ->
+            wv.settings.blockNetworkImage = dataSaverOn
+        }
+    }
+
     LaunchedEffect(uiState.isInPictureInPictureMode) {
         val wasPlayingAtSwap = uiState.mediaPlaybackState.isPlaying
         if (uiState.isInPictureInPictureMode) {
@@ -1407,6 +1416,7 @@ fun ZenBrowserScreen(
                     onUpdateSwitchToNewTabImmediately = viewModel::updateSwitchToNewTabImmediately,
                     onUpdateNewTabPosition = viewModel::updateNewTabPosition,
                     onUpdateNotificationSettings = viewModel::updateNotificationSettings,
+                    onUpdateDataSaver = viewModel::updateDataSaverEnabled,
                     onUpdateFakeSearchConfig = { aiText, trigger, headline, snippet ->
                         viewModel.updateFakeSearchConfig(
                             customAiOverviewText = aiText,

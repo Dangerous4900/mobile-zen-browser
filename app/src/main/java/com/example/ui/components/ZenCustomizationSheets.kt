@@ -298,6 +298,7 @@ fun SidebarCustomizationStudioSheet(
     onUpdateSwitchToNewTabImmediately: (Boolean) -> Unit = {},
     onUpdateNewTabPosition: (NewTabPosition) -> Unit = {},
     onUpdateNotificationSettings: (showTabCloseNotification: Boolean?, showActionNotifications: Boolean?) -> Unit = { _, _ -> },
+    onUpdateDataSaver: (Boolean) -> Unit = {},
     onUpdateFakeSearchConfig: (overviewText: String?, trigger: String?, headline: String?, snippet: String?) -> Unit = { _, _, _, _ -> },
     onOpenFakeSearch: (String) -> Unit = {},
     onUpdateHistoryDeletionInterval: (HistoryDeletionInterval) -> Unit = {},
@@ -792,6 +793,18 @@ fun SidebarCustomizationStudioSheet(
                 }
             }
         }
+
+            item {
+                SectionCard(title = "Data saver") {
+                    SettingSwitchRow(
+                        title = "Data saver",
+                        subtitle = "Don't load images on websites to use less data. Reload a page after changing this.",
+                        checked = cfg.dataSaverEnabled,
+                        onCheckedChange = onUpdateDataSaver,
+                        testTag = "toggle_data_saver"
+                    )
+                }
+            }
 
             // At a Glance & History Interval
             item {
@@ -4564,7 +4577,7 @@ private fun SectionCard(
     content: @Composable () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(14.dp),
         color = Color(0xFF141418),
         border = BorderStroke(1.dp, Color(0xFF222226)),
         modifier = Modifier.fillMaxWidth()
@@ -4572,18 +4585,27 @@ private fun SectionCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = title,
-                style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF71717A),
+                text = sentenceCaseTitle(title),
+                style = MaterialTheme.typography.labelLarge,
+                color = Color(0xFF9A9AA3),
                 fontWeight = FontWeight.SemiBold
             )
             content()
         }
     }
+}
+
+private val titleAcronyms = mapOf("ai" to "AI", "url" to "URL", "pip" to "PiP", "ui" to "UI", "dns" to "DNS", "vpn" to "VPN", "https" to "HTTPS", "adm" to "ADM", "css" to "CSS", "api" to "API")
+
+/** "FAKE GOOGLE SEARCH & AI OVERVIEW" -> "Fake google search & AI overview" (already-mixed-case titles are left alone). */
+private fun sentenceCaseTitle(raw: String): String {
+    if (raw != raw.uppercase()) return raw
+    val words = raw.lowercase().split(" ").map { titleAcronyms[it] ?: it }
+    return words.joinToString(" ").replaceFirstChar { it.uppercase() }
 }
 
 @Composable
@@ -4597,20 +4619,21 @@ private fun SettingSwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFFF4F4F6)
             )
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFA1A1AA)
+                color = Color(0xFF9A9AA3)
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
