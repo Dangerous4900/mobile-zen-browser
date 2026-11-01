@@ -194,6 +194,12 @@ object ZenGeckoManager {
 
             override fun onPause(s: GeckoSession, mediaSession: MediaSession) {
                 activeMediaSessions[tabId] = mediaSession
+                val now = System.currentTimeMillis()
+                if (now < pipKeepPlayingUntil && now - lastUserPauseAt > 1200L) {
+                    // Automatic pause caused by entering PiP, not by the user: undo it and keep reporting "playing".
+                    runCatching { s.setActive(true); mediaSession.play() }
+                    return
+                }
                 callback.onMediaStateChange(isActive = true, isPlaying = false, title = currentTitle ?: "Media")
             }
 
@@ -243,7 +249,17 @@ object ZenGeckoManager {
         }
     }
 
+    /** While now < this, a pause the page/engine did on its own (window shrank, lost focus) is undone. */
+    @Volatile var pipKeepPlayingUntil = 0L
+    @Volatile private var lastUserPauseAt = 0L
+
+    fun holdPlaybackForPip(durationMs: Long = 6000L) {
+        pipKeepPlayingUntil = System.currentTimeMillis() + durationMs
+        sessionPool.values.forEach { runCatching { it.setActive(true) } }
+    }
+
     fun setMediaPlaying(tabId: String, playing: Boolean) {
+        if (!playing) lastUserPauseAt = System.currentTimeMillis()
         val ms = activeMediaSessions[tabId] ?: activeMediaSessions.values.firstOrNull()
         if (ms != null) {
             if (playing) ms.play() else ms.pause()
