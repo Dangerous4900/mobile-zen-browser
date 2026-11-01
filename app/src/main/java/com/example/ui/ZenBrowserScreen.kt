@@ -145,6 +145,7 @@ import com.example.data.PasswordEntity
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlin.coroutines.resume
 
 private fun captureWindowBitmap(
@@ -569,6 +570,33 @@ fun ZenBrowserScreen(
                 com.example.ui.blur.ZenBackdropBlur.toSnapshot(full).also { if (full !== it.bitmap) full.recycle() }
             }
             backdropSnapshot = snapshot
+        }
+
+        // The panel is only drawn after a fresh capture of the CURRENT page, so the blur behind it is never
+        // the previous page / an old scroll position. The panel is not drawn yet during the capture, so it
+        // can't end up in the snapshot.
+        var sidebarShown by remember { mutableStateOf(false) }
+        LaunchedEffect(uiState.isSidebarOpen) {
+            if (!uiState.isSidebarOpen) {
+                sidebarShown = false
+                return@LaunchedEffect
+            }
+            if (blurEnabled && !sidebarPinnedOpen && !uiState.isInPictureInPictureMode) {
+                val before = softwareBlurredBackdrop
+                val full = captureWindowWithSurfacesOrNull(localView)
+                if (full != null) {
+                    val snapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                        com.example.ui.blur.ZenBackdropBlur.toSnapshot(full).also { if (full !== it.bitmap) full.recycle() }
+                    }
+                    backdropSnapshot = snapshot
+                    // Wait (briefly) for the blurred version of this exact snapshot before sliding the panel in.
+                    kotlinx.coroutines.withTimeoutOrNull(350L) {
+                        androidx.compose.runtime.snapshotFlow { softwareBlurredBackdrop }
+                            .first { it != null && it !== before }
+                    }
+                }
+            }
+            sidebarShown = true
         }
 
         // Blur is computed off the main thread, and only this effect reruns when the slider moves
@@ -1172,7 +1200,7 @@ fun ZenBrowserScreen(
         // the area beside and below it not occupied by the side panel remains completely normal (Color.Transparent)!
         if (!sidebarPinnedOpen && !uiState.isInPictureInPictureMode) {
             AnimatedVisibility(
-                visible = uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
+                visible = sidebarShown && uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
                 enter = fadeIn(spring(stiffness = Spring.StiffnessMediumLow)),
                 exit = fadeOut(spring(stiffness = Spring.StiffnessMediumLow))
             ) {
@@ -1191,7 +1219,7 @@ fun ZenBrowserScreen(
 
             val isRight = sidebarCfg.position == SidebarPosition.RIGHT
             AnimatedVisibility(
-                visible = uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
+                visible = sidebarShown && uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
                 enter = slideInHorizontally(
                     animationSpec = spring(
                         dampingRatio = Spring.DampingRatioNoBouncy,
