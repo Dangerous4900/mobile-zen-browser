@@ -258,6 +258,8 @@ fun ZenSidebarPanel(
     onToggleMediaMute: () -> Unit = {},
     onDismissMediaBar: () -> Unit,
     onClearUnpinnedTabs: () -> Unit,
+    onCloseAllWorkspaceTabs: () -> Unit = {},
+    onOpenTabOverview: () -> Unit = {},
     onClearAllHistory: () -> Unit = {},
     onDeleteHistoryEntry: (String) -> Unit = {},
     viewportGraphicsLayer: androidx.compose.ui.graphics.layer.GraphicsLayer? = null,
@@ -502,6 +504,36 @@ fun ZenSidebarPanel(
                     onDismissRequest = { showEmptyAreaEditMenu = false },
                     containerColor = Color(0xFF141417)
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("Tabs overview") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.GridView,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        onClick = {
+                            showEmptyAreaEditMenu = false
+                            onOpenTabOverview()
+                        },
+                        modifier = Modifier.testTag("sidebar_tab_overview_menu_item")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Clear tabs") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.DeleteSweep,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        onClick = {
+                            showEmptyAreaEditMenu = false
+                            onCloseAllWorkspaceTabs()
+                        },
+                        modifier = Modifier.testTag("sidebar_clear_tabs_menu_item")
+                    )
                     DropdownMenuItem(
                         text = { Text("Edit Side Panel Layout & Tools") },
                         leadingIcon = {
@@ -825,7 +857,7 @@ fun ZenSidebarPanel(
                             }
                         }
 
-                        if (!sidebarCfg.enabledTopToolbarTools.contains(TopToolbarToolItem.EDIT_LAYOUT)) {
+                        if (!sidebarCfg.hideEditPenIcon && !sidebarCfg.enabledTopToolbarTools.contains(TopToolbarToolItem.EDIT_LAYOUT)) {
                             IconButton(
                                 onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
                                 modifier = Modifier
@@ -2350,7 +2382,7 @@ private fun ToolbarIconToggle(
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (active) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
+                tint = Color.White,
                 modifier = Modifier.size(16.dp)
             )
         }

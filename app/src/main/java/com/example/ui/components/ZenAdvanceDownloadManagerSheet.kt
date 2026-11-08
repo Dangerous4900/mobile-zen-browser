@@ -123,33 +123,7 @@ fun ZenAdvanceDownloadManagerSheet(
     var isSearching by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
 
-    // Seed realistic active download if queue is empty so user sees exact ADM experience
-    val allDownloads = remember(uiState.downloadItems) {
-        if (uiState.downloadItems.isEmpty()) {
-            listOf(
-                DownloadItemEntity(
-                    id = "adm_sample_1",
-                    fileName = "Hawkeye S01 E03.mp4",
-                    url = "https://hydrahd.ws/stream/Hawkeye.S01E03.1080p.mp4",
-                    mimeType = "video/mp4",
-                    totalBytes = 501_600_000L,
-                    downloadedBytes = 223_300_000L,
-                    status = "downloading",
-                    speedBytesPerSec = 20_200_000L,
-                    etaSeconds = 88L,
-                    totalSegments = 501,
-                    completedSegments = 223,
-                    isResumable = true,
-                    isWifiOnly = false,
-                    sourceDomain = "hydrahd.ws",
-                    avgSpeedMbps = 4.4f,
-                    peakSpeedMbps = 15.3f
-                )
-            )
-        } else {
-            uiState.downloadItems
-        }
-    }
+    val allDownloads = uiState.downloadItems
 
     val queueItems = remember(allDownloads, searchQuery) {
         allDownloads.filter { it.status == "downloading" || it.status == "paused" }

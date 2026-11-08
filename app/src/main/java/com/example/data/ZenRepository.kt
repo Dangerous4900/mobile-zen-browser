@@ -52,9 +52,10 @@ class ZenRepository(
         val SIDEBAR_CUSTOM_COLOR_HEX = longPreferencesKey("sidebar_custom_color_hex")
         val BORDER_GLOW = booleanPreferencesKey("border_glow")
         val SECTION_ORDER = stringPreferencesKey("section_order")
-        val ENABLED_SIDEBAR_TOOLS = stringPreferencesKey("enabled_sidebar_tools")
-        val ENABLED_TOP_TOOLBAR_TOOLS = stringPreferencesKey("enabled_top_toolbar_tools")
+        val ENABLED_SIDEBAR_TOOLS = stringPreferencesKey("enabled_sidebar_tools_v2")
+        val ENABLED_TOP_TOOLBAR_TOOLS = stringPreferencesKey("enabled_top_toolbar_tools_v2")
         val SHOW_SIDEBAR_NAV_CONTROLS = booleanPreferencesKey("show_sidebar_nav_controls")
+        val HIDE_EDIT_PEN_ICON = booleanPreferencesKey("hide_edit_pen_icon")
         val BACK_SWIPE_SIDEBAR_MODE = stringPreferencesKey("back_swipe_sidebar_mode")
         val OPEN_IN_NEW_TAB = booleanPreferencesKey("open_in_new_tab")
         val OPEN_HISTORY_IN_NEW_TAB = booleanPreferencesKey("open_history_in_new_tab")
@@ -166,6 +167,7 @@ class ZenRepository(
             showWorkspaceStripInBottomBar = prefs[Keys.SHOW_WORKSPACE_STRIP] ?: false,
             showTabFaviconBadges = prefs[Keys.SHOW_FAVICONS] ?: true,
             showSidebarNavControls = prefs[Keys.SHOW_SIDEBAR_NAV_CONTROLS] ?: true,
+            hideEditPenIcon = prefs[Keys.HIDE_EDIT_PEN_ICON] ?: false,
             backSwipeSidebarMode = prefs[Keys.BACK_SWIPE_SIDEBAR_MODE]?.let {
                 runCatching { BackSwipeSidebarMode.valueOf(it) }.getOrNull()
             } ?: BackSwipeSidebarMode.GO_BACK_THEN_SIDEBAR,
@@ -268,6 +270,7 @@ class ZenRepository(
             prefs[Keys.SHOW_WORKSPACE_STRIP] = config.showWorkspaceStripInBottomBar
             prefs[Keys.SHOW_FAVICONS] = config.showTabFaviconBadges
             prefs[Keys.SHOW_SIDEBAR_NAV_CONTROLS] = config.showSidebarNavControls
+            prefs[Keys.HIDE_EDIT_PEN_ICON] = config.hideEditPenIcon
             prefs[Keys.BACK_SWIPE_SIDEBAR_MODE] = config.backSwipeSidebarMode.name
             prefs[Keys.SIDEBAR_UI_SCALE] = config.sidebarUiScale
             prefs[Keys.GLASS_INTENSITY] = config.glassBlurIntensity

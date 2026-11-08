@@ -122,9 +122,22 @@ fun ZenGeckoViewPort(
     val currentUiState by androidx.compose.runtime.rememberUpdatedState(uiState)
     val currentOnOpenSidebar by androidx.compose.runtime.rememberUpdatedState(onOpenSidebar)
 
+    var geckoViewRef by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<GeckoView?>(null) }
+    // Page previews for the tabs overview: after a page finishes loading, and whenever the side panel opens.
+    androidx.compose.runtime.LaunchedEffect(tab.id, currentUiState.pageLoadingProgress >= 100, currentUiState.isSidebarOpen) {
+        val gv = geckoViewRef ?: return@LaunchedEffect
+        if (currentUiState.isInPictureInPictureMode || tab.url.isBlank()) return@LaunchedEffect
+        if (tab.id != currentUiState.activePrimaryTab?.id) return@LaunchedEffect
+        if (!currentUiState.isSidebarOpen) kotlinx.coroutines.delay(1500)
+        try {
+            gv.capturePixels().accept({ bmp -> if (bmp != null) ZenTabThumbnails.put(tab.id, bmp) }, { _ -> })
+        } catch (_: Throwable) {}
+    }
+
     AndroidView(
         factory = { ctx ->
             GeckoView(ctx).apply {
+                geckoViewRef = this
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
@@ -133,6 +146,13 @@ fun ZenGeckoViewPort(
                 var touchStartX = 0f
                 var touchStartY = 0f
                 var swipeHandled = false
+                // Honors Settings > horizontal swipe mode: one edge opens the side panel, the other goes back.
+                fun handleEdgeSwipe(fromLeftEdge: Boolean) {
+                    val panelOnLeft = currentUiState.sidebarConfig.horizontalSwipeMode ==
+                        com.example.data.HorizontalSwipeNavigationMode.SWIPE_RIGHT_PANEL_LEFT_BACK
+                    if (fromLeftEdge == panelOnLeft) currentOnOpenSidebar()
+                    else post { runCatching { geckoSession.goBack() } }
+                }
                 // Gesture navigation reserves the screen edges for "back" and cancels our swipe (ACTION_CANCEL),
                 // so ask the system to leave a band of each edge to us (Android caps this at 200dp tall).
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
@@ -176,7 +196,7 @@ fun ZenGeckoViewPort(
                                 val fromRight = touchStartX >= (screenWidthPx - edgeThresholdPx) && dx < -48f
                                 if ((fromLeft || fromRight) && kotlin.math.abs(dx) > dy * 1.35f) {
                                     swipeHandled = true
-                                    currentOnOpenSidebar()
+                                    handleEdgeSwipe(fromLeft)
                                 }
                             }
                         }
@@ -205,13 +225,9 @@ fun ZenGeckoViewPort(
                                 val horizontalDistance = kotlin.math.abs(dx)
                                 if (horizontalDistance > 60f && horizontalDistance > dy * 1.35f) {
                                     if (isLeftEdge && dx > 40f) {
-                                        if (!currentUiState.isInPictureInPictureMode) {
-                                            currentOnOpenSidebar()
-                                        }
+                                        if (!currentUiState.isInPictureInPictureMode) handleEdgeSwipe(true)
                                     } else if (isRightEdge && dx < -40f) {
-                                        if (!currentUiState.isInPictureInPictureMode) {
-                                            currentOnOpenSidebar()
-                                        }
+                                        if (!currentUiState.isInPictureInPictureMode) handleEdgeSwipe(false)
                                     }
                                 }
                             }

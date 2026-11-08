@@ -50,6 +50,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 enum class ActiveModalSheet {
     NONE,
@@ -1007,6 +1008,60 @@ class ZenBrowserViewModel(
         viewModelScope.launch {
             repository.clearAllHistory()
             showBanner("Browsing history cleared")
+        }
+    }
+
+    private val downloadEventMutex = kotlinx.coroutines.sync.Mutex()
+
+    /** Live progress of a real download (list row + banner when finished). Events are applied in order. */
+    fun onDownloadEvent(e: com.example.gecko.ZenDownloadEvent) {
+        viewModelScope.launch {
+            downloadEventMutex.withLock {
+                if (e.state == "failed") {
+                    repository.deleteDownloadItem(e.id)
+                    showBanner("Download failed: ${e.fileName}")
+                    return@withLock
+                }
+                val done = e.state == "completed"
+                val pct = if (e.totalBytes > 0) ((e.downloadedBytes * 100) / e.totalBytes).toInt().coerceIn(0, 100) else 0
+                repository.insertDownloadItem(
+                    DownloadItemEntity(
+                        id = e.id,
+                        fileName = e.fileName,
+                        url = e.url,
+                        mimeType = e.mimeType,
+                        totalBytes = e.totalBytes,
+                        status = if (done) "completed" else "downloading",
+                        downloadedBytes = e.downloadedBytes,
+                        speedBytesPerSec = e.speedBytesPerSec,
+                        etaSeconds = if (!done && e.speedBytesPerSec > 0 && e.totalBytes > e.downloadedBytes)
+                            (e.totalBytes - e.downloadedBytes) / e.speedBytesPerSec else 0L,
+                        totalSegments = 100,
+                        completedSegments = if (done) 100 else pct,
+                        isResumable = false,
+                        sourceDomain = runCatching { java.net.URI(e.url).host ?: "" }.getOrDefault("")
+                    )
+                )
+                if (done) showBanner("Downloaded ${e.fileName}")
+            }
+        }
+    }
+
+    /** Closes every tab of the current workspace (essentials are kept). */
+    fun closeAllTabsInWorkspace() {
+        val state = uiState.value
+        val ids = state.allTabs.filter { it.workspaceId == state.activeWorkspaceId && !it.isEssential }.map { it.id }
+        if (ids.isEmpty()) return
+        ids.forEach {
+            tabHistoryStacks.remove(it)
+            tabForwardStacks.remove(it)
+            com.example.gecko.ZenGeckoManager.removeSession(it)
+            com.example.ui.components.ZenWebViewManager.remove(it)
+        }
+        viewModelScope.launch {
+            ids.forEach { repository.deleteTab(it) }
+            sessionState.update { it.copy(isSplitViewEnabled = false, secondarySplitTabId = null) }
+            showBanner("Closed ${ids.size} tabs")
         }
     }
 
@@ -2045,6 +2100,10 @@ class ZenBrowserViewModel(
 
     fun updateHorizontalSwipeMode(mode: HorizontalSwipeNavigationMode) {
         updateSidebarConfig { it.copy(horizontalSwipeMode = mode) }
+    }
+
+    fun updateHideEditPenIcon(hide: Boolean) {
+        updateSidebarConfig { it.copy(hideEditPenIcon = hide) }
     }
 
     fun updateShowSidebarNavControls(show: Boolean) {
