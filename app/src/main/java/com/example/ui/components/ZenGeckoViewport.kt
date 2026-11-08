@@ -132,13 +132,30 @@ fun ZenGeckoViewPort(
                 setSession(geckoSession)
                 var touchStartX = 0f
                 var touchStartY = 0f
+                var swipeHandled = false
+                // Gesture navigation reserves the screen edges for "back" and cancels our swipe (ACTION_CANCEL),
+                // so ask the system to leave a band of each edge to us (Android caps this at 200dp tall).
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
+                        val d = v.resources.displayMetrics.density
+                        val w = r - l
+                        val h = b - t
+                        val band = (24 * d).toInt()
+                        val bandH = minOf(h, (200 * d).toInt())
+                        val top = (h - bandH) / 2
+                        v.systemGestureExclusionRects = listOf(
+                            android.graphics.Rect(0, top, band, top + bandH),
+                            android.graphics.Rect(w - band, top, w, top + bandH)
+                        )
+                    }
+                }
                 setOnTouchListener { _, event ->
                     if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_UP) {
                         ZenGeckoManager.noteUserTouch()
                     }
                     if (currentUiState.isInPictureInPictureMode) return@setOnTouchListener false
                     val densityMetrics = ctx.resources.displayMetrics
-                    val edgeThresholdPx = 28f * densityMetrics.density
+                    val edgeThresholdPx = 44f * densityMetrics.density
                     val screenWidthPx = densityMetrics.widthPixels.toFloat()
 
                     when (event.actionMasked) {
@@ -146,9 +163,22 @@ fun ZenGeckoViewPort(
                             if (currentUiState.isInPictureInPictureMode) return@setOnTouchListener false
                             touchStartX = event.rawX
                             touchStartY = event.rawY
+                            swipeHandled = false
                         }
                         MotionEvent.ACTION_MOVE -> {
                             if (currentUiState.isInPictureInPictureMode) return@setOnTouchListener false
+                            // Open as soon as the swipe is clearly horizontal, instead of waiting for the finger to lift
+                            // (the page or the system may consume or cancel the gesture before ACTION_UP).
+                            if (!swipeHandled && touchStartX > 0f) {
+                                val dx = event.rawX - touchStartX
+                                val dy = kotlin.math.abs(event.rawY - touchStartY)
+                                val fromLeft = touchStartX <= edgeThresholdPx && dx > 48f
+                                val fromRight = touchStartX >= (screenWidthPx - edgeThresholdPx) && dx < -48f
+                                if ((fromLeft || fromRight) && kotlin.math.abs(dx) > dy * 1.35f) {
+                                    swipeHandled = true
+                                    currentOnOpenSidebar()
+                                }
+                            }
                         }
                         MotionEvent.ACTION_CANCEL -> {
                             touchStartX = 0f
@@ -157,6 +187,12 @@ fun ZenGeckoViewPort(
                         }
                         MotionEvent.ACTION_UP -> {
                             if (currentUiState.isInPictureInPictureMode) {
+                                touchStartX = 0f
+                                touchStartY = 0f
+                                return@setOnTouchListener false
+                            }
+                            if (swipeHandled) {
+                                swipeHandled = false
                                 touchStartX = 0f
                                 touchStartY = 0f
                                 return@setOnTouchListener false
