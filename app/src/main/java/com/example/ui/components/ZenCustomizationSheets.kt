@@ -1730,6 +1730,7 @@ fun SidebarLayoutEditorSheet(
     uiState: ZenBrowserUiState,
     onDismiss: () -> Unit,
     onToggleSidebarNavControls: (Boolean) -> Unit,
+    onToggleHideEditPenIcon: (Boolean) -> Unit = {},
     onToggleSidebarOption: (
         compactAutoHide: Boolean?,
         showEssentials: Boolean?,
@@ -1793,6 +1794,13 @@ fun SidebarLayoutEditorSheet(
                         checked = cfg.showSidebarNavControls,
                         onCheckedChange = onToggleSidebarNavControls,
                         testTag = "editor_toggle_nav_controls"
+                    )
+                    SettingSwitchRow(
+                        title = "Hide Pen (Edit) Icon",
+                        subtitle = "Hide the pen icon at the top of the side panel and on Essentials. You can still long-press the panel to edit.",
+                        checked = cfg.hideEditPenIcon,
+                        onCheckedChange = onToggleHideEditPenIcon,
+                        testTag = "editor_toggle_hide_pen"
                     )
                     SettingSwitchRow(
                         title = "Essentials Space",
@@ -5477,13 +5485,45 @@ fun ZenLibrarySheet(
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
-                                                Text(
-                                                    text = item.url,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = Color(0xFFA1A1AA),
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
+                                                if (item.status == "downloading") {
+                                                    val frac = if (item.totalBytes > 0)
+                                                        (item.downloadedBytes.toFloat() / item.totalBytes).coerceIn(0f, 1f) else 0f
+                                                    Spacer(modifier = Modifier.height(5.dp))
+                                                    if (item.totalBytes > 0) {
+                                                        androidx.compose.material3.LinearProgressIndicator(
+                                                            progress = { frac },
+                                                            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                                                            color = Color(0xFF60A5FA),
+                                                            trackColor = Color(0xFF2D2D3A)
+                                                        )
+                                                    } else {
+                                                        androidx.compose.material3.LinearProgressIndicator(
+                                                            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                                                            color = Color(0xFF60A5FA),
+                                                            trackColor = Color(0xFF2D2D3A)
+                                                        )
+                                                    }
+                                                    Spacer(modifier = Modifier.height(3.dp))
+                                                    Text(
+                                                        text = buildString {
+                                                            append(com.example.downloads.ZenDownloader.formatBytes(item.downloadedBytes))
+                                                            if (item.totalBytes > 0) append(" of ${com.example.downloads.ZenDownloader.formatBytes(item.totalBytes)}")
+                                                            if (item.speedBytesPerSec > 0) append(" • ${com.example.downloads.ZenDownloader.formatBytes(item.speedBytesPerSec)}/s")
+                                                            if (item.etaSeconds > 0) append(" • ${if (item.etaSeconds >= 60) "${item.etaSeconds / 60}m ${item.etaSeconds % 60}s" else "${item.etaSeconds}s"} left")
+                                                        },
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = Color(0xFFA1A1AA),
+                                                        maxLines = 1
+                                                    )
+                                                } else {
+                                                    Text(
+                                                        text = if (item.totalBytes > 0) "${com.example.downloads.ZenDownloader.formatBytes(item.totalBytes)} • ${item.url}" else item.url,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = Color(0xFFA1A1AA),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
                                             }
                                             IconButton(
                                                 onClick = { onDeleteDownloadItem(item.id) },

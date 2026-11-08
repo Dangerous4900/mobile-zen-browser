@@ -341,6 +341,7 @@ data class SidebarConfig(
     val showTabFaviconBadges: Boolean = true,
     // Side Panel Navigation Controls & Back Swipe Gesture Mode (Go back in web history first, then open side panel)
     val showSidebarNavControls: Boolean = true,
+    val hideEditPenIcon: Boolean = false,
     val backSwipeSidebarMode: BackSwipeSidebarMode = BackSwipeSidebarMode.GO_BACK_THEN_SIDEBAR,
     val horizontalSwipeMode: HorizontalSwipeNavigationMode = HorizontalSwipeNavigationMode.SWIPE_RIGHT_PANEL_LEFT_BACK,
     val openInNewTab: Boolean = false,
@@ -402,15 +403,16 @@ data class SidebarConfig(
         SidebarSectionType.QUICK_TOOLS,
         SidebarSectionType.WORKSPACES
     ),
-    val enabledSidebarTools: List<SidebarToolItem> = SidebarToolItem.entries.toList(),
+    val enabledSidebarTools: List<SidebarToolItem> = SidebarToolItem.entries.filter {
+        it != SidebarToolItem.SPLIT_VIEW && it != SidebarToolItem.MEDIA_CAPTURE &&
+            it != SidebarToolItem.DOWNLOAD_MANAGER && it != SidebarToolItem.PRIVACY_SHIELD &&
+            it != SidebarToolItem.CLEAR_TABS
+    },
     val enabledTopToolbarTools: List<TopToolbarToolItem> = listOf(
         TopToolbarToolItem.BACK,
         TopToolbarToolItem.FORWARD,
         TopToolbarToolItem.RELOAD,
-        TopToolbarToolItem.HOME,
-        TopToolbarToolItem.AT_A_GLANCE,
-        TopToolbarToolItem.TRANSLATE,
-        TopToolbarToolItem.EDIT_LAYOUT
+        TopToolbarToolItem.HOME
     )
 )
 

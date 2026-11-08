@@ -331,11 +331,45 @@ fun ZenBrowserScreen(
         }
     }
 
+    var showTabOverview by remember { mutableStateOf(false) }
+    var contextInfo by remember { mutableStateOf<com.example.gecko.ZenContextInfo?>(null) }
+    val overlayContext = androidx.compose.ui.platform.LocalContext.current
     DisposableEffect(Unit) {
-        com.example.gecko.ZenGeckoManager.downloadSink = { name, url, mime, bytes, ok ->
-            if (ok) viewModel.addDownloadItem(name, url, mime, bytes) else viewModel.showBanner("Download failed: $name")
+        com.example.gecko.ZenGeckoManager.downloadEvents = { viewModel.onDownloadEvent(it) }
+        com.example.gecko.ZenGeckoManager.contextMenuSink = { info -> contextInfo = info }
+        onDispose {
+            com.example.gecko.ZenGeckoManager.downloadEvents = null
+            com.example.gecko.ZenGeckoManager.contextMenuSink = null
         }
-        onDispose { com.example.gecko.ZenGeckoManager.downloadSink = null }
+    }
+    if (showTabOverview) {
+        com.example.ui.components.ZenTabOverview(
+            tabs = uiState.currentWorkspacePinnedTabs + uiState.currentWorkspaceOpenTabs,
+            activeTabId = uiState.activePrimaryTab?.id,
+            onSelect = { viewModel.selectTab(it); showTabOverview = false },
+            onCloseTab = { viewModel.closeTab(it); com.example.ui.components.ZenTabThumbnails.remove(it) },
+            onDismiss = { showTabOverview = false }
+        )
+    }
+    contextInfo?.let { info ->
+        com.example.ui.components.ZenContextMenu(
+            info = info,
+            onOpenInNewTab = { viewModel.openLinkInNewTab(it, forceSwitch = false) },
+            onDownload = { com.example.gecko.ZenGeckoManager.downloadUrl(it) },
+            onShare = { url ->
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(android.content.Intent.EXTRA_TEXT, url)
+                }
+                runCatching { overlayContext.startActivity(android.content.Intent.createChooser(send, "Share").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            },
+            onCopy = { url ->
+                val cm = overlayContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("link", url))
+                viewModel.showBanner("Link copied")
+            },
+            onDismiss = { contextInfo = null }
+        )
     }
 
     val onDismissMediaBar: () -> Unit = {
@@ -700,6 +734,8 @@ fun ZenBrowserScreen(
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
                     onDismissMediaBar = onDismissMediaBar,
+                    onCloseAllWorkspaceTabs = { viewModel.closeAllTabsInWorkspace() },
+                    onOpenTabOverview = { viewModel.setSidebarOpen(false); showTabOverview = true },
                     onClearUnpinnedTabs = {
                         viewModel.clearBrowsingDataAndUnpinnedTabs {
                             primaryWebController.clearWebData()
@@ -1212,6 +1248,8 @@ fun ZenBrowserScreen(
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
                     onDismissMediaBar = onDismissMediaBar,
+                    onCloseAllWorkspaceTabs = { viewModel.closeAllTabsInWorkspace() },
+                    onOpenTabOverview = { viewModel.setSidebarOpen(false); showTabOverview = true },
                     onClearUnpinnedTabs = {
                         viewModel.clearBrowsingDataAndUnpinnedTabs {
                             primaryWebController.clearWebData()
@@ -1309,6 +1347,8 @@ fun ZenBrowserScreen(
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
                     onDismissMediaBar = onDismissMediaBar,
+                    onCloseAllWorkspaceTabs = { viewModel.closeAllTabsInWorkspace() },
+                    onOpenTabOverview = { viewModel.setSidebarOpen(false); showTabOverview = true },
                     onClearUnpinnedTabs = {
                         viewModel.clearBrowsingDataAndUnpinnedTabs {
                             primaryWebController.clearWebData()
@@ -1460,6 +1500,7 @@ fun ZenBrowserScreen(
                     uiState = uiState,
                     onDismiss = viewModel::closeSheet,
                     onToggleSidebarNavControls = viewModel::updateShowSidebarNavControls,
+                    onToggleHideEditPenIcon = viewModel::updateHideEditPenIcon,
                     onToggleSidebarOption = viewModel::toggleSidebarOption,
                     onMoveSection = viewModel::moveSidebarSection,
                     onToggleToolItem = { tool, _ -> viewModel.toggleSidebarToolItem(tool) },

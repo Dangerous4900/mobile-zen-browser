@@ -18,6 +18,20 @@ data class GeckoMediaState(
     val title: String = ""
 )
 
+data class ZenDownloadEvent(
+    val id: String,
+    val fileName: String,
+    val url: String,
+    val mimeType: String,
+    val downloadedBytes: Long,
+    val totalBytes: Long,
+    val speedBytesPerSec: Long,
+    /** "downloading", "completed" or "failed" */
+    val state: String
+)
+
+data class ZenContextInfo(val imageUrl: String?, val linkUrl: String?, val mediaUrl: String?, val title: String?)
+
 interface ZenGeckoCallback {
     fun onLocationChange(url: String, title: String?)
     fun onProgressChange(progress: Int, canGoBack: Boolean, canGoForward: Boolean)
@@ -32,7 +46,60 @@ object ZenGeckoManager {
     @Volatile private var appContext: Context? = null
 
     /** Set by the UI: called on the main thread when a page download finished or failed. */
-    @Volatile var downloadSink: ((fileName: String, url: String, mimeType: String, bytes: Long, ok: Boolean) -> Unit)? = null
+    @Volatile var downloadEvents: ((ZenDownloadEvent) -> Unit)? = null
+
+    /** Set by the UI: long-press on an image / link / video. */
+    @Volatile var contextMenuSink: ((ZenContextInfo) -> Unit)? = null
+
+    private fun trackDownload(
+        ctx: Context, id: String, name: String, url: String, mime: String, total: Long,
+        start: ((onProgress: (Long, Long) -> Unit, onDone: (Boolean, Long) -> Unit) -> Unit)
+    ) {
+        fun emit(done: Long, speed: Long, state: String, totalOverride: Long = total) {
+            val ev = ZenDownloadEvent(id, name, url, mime, done, if (totalOverride > 0) totalOverride else if (state == "completed") done else 0L, speed, state)
+            mainHandler.post { downloadEvents?.invoke(ev) }
+        }
+        emit(0, 0, "downloading")
+        com.example.downloads.ZenDownloader.notifyProgress(ctx, id, name, 0, total, 0)
+        start({ done, speed ->
+            emit(done, speed, "downloading")
+            com.example.downloads.ZenDownloader.notifyProgress(ctx, id, name, done, total, speed)
+        }) { ok, bytes ->
+            emit(bytes, 0, if (ok) "completed" else "failed", bytes)
+            com.example.downloads.ZenDownloader.notifyFinished(ctx, id, name, ok)
+        }
+    }
+
+    /** "Download image" / "Download link": plain HTTP download with progress. */
+    fun downloadUrl(url: String) {
+        val ctx = appContext ?: return
+        val id = "dl_" + java.util.UUID.randomUUID().toString().take(8)
+        var name = "download"
+        var mime = ""
+        var total = 0L
+        emitStarting(id, url)
+        com.example.downloads.ZenDownloader.saveFromUrl(
+            ctx, url,
+            onStart = { n, m, t ->
+                name = n; mime = m; total = t
+                mainHandler.post { downloadEvents?.invoke(ZenDownloadEvent(id, n, url, m, 0, t, 0, "downloading")) }
+                com.example.downloads.ZenDownloader.notifyProgress(ctx, id, n, 0, t, 0)
+            },
+            onProgress = { done, speed ->
+                mainHandler.post { downloadEvents?.invoke(ZenDownloadEvent(id, name, url, mime, done, total, speed, "downloading")) }
+                com.example.downloads.ZenDownloader.notifyProgress(ctx, id, name, done, total, speed)
+            },
+            onDone = { ok, bytes ->
+                mainHandler.post { downloadEvents?.invoke(ZenDownloadEvent(id, name, url, mime, bytes, bytes, 0, if (ok) "completed" else "failed")) }
+                com.example.downloads.ZenDownloader.notifyFinished(ctx, id, name, ok)
+            }
+        )
+    }
+
+    private fun emitStarting(id: String, url: String) {
+        val guess = com.example.downloads.ZenDownloader.fileNameFor(url, null, null)
+        mainHandler.post { downloadEvents?.invoke(ZenDownloadEvent(id, guess, url, "", 0, 0, 0, "downloading")) }
+    }
 
     /** Set by MainActivity: opens the system file chooser for <input type=file> and reports the chosen uris. */
     @Volatile var filePicker: ((multiple: Boolean, mimeTypes: Array<String>, onResult: (List<android.net.Uri>) -> Unit) -> Unit)? = null
@@ -203,10 +270,25 @@ object ZenGeckoManager {
                 val body = response.body ?: return
                 val headers = response.headers
                 val mime = headers.entries.firstOrNull { it.key.equals("content-type", true) }?.value?.substringBefore(';')?.trim().orEmpty()
+                val total = headers.entries.firstOrNull { it.key.equals("content-length", true) }?.value?.trim()?.toLongOrNull() ?: 0L
                 val name = com.example.downloads.ZenDownloader.fileNameFor(response.uri, headers, mime)
-                com.example.downloads.ZenDownloader.save(ctx, name, mime, body) { ok, bytes ->
-                    mainHandler.post { downloadSink?.invoke(name, response.uri, mime, bytes, ok) }
+                val id = "dl_" + java.util.UUID.randomUUID().toString().take(8)
+                trackDownload(ctx, id, name, response.uri, mime, total) { onProgress, onDone ->
+                    com.example.downloads.ZenDownloader.save(ctx, name, mime, body, onProgress, onDone)
                 }
+            }
+
+            override fun onContextMenu(
+                s: GeckoSession,
+                screenX: Int,
+                screenY: Int,
+                element: GeckoSession.ContentDelegate.ContextElement
+            ) {
+                val image = if (element.type == GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE) element.srcUri else null
+                val media = if (element.type == GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO ||
+                    element.type == GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO) element.srcUri else null
+                if (image == null && media == null && element.linkUri == null) return
+                mainHandler.post { contextMenuSink?.invoke(ZenContextInfo(image, element.linkUri, media, element.title ?: element.altText)) }
             }
         }
 
@@ -317,7 +399,7 @@ object ZenGeckoManager {
         }
     }
 
-    private const val USER_GESTURE_WINDOW_MS = 1500L
+    private const val USER_GESTURE_WINDOW_MS = 800L
     @Volatile var lastUserTouchAt = 0L
     @Volatile private var lastPopupAt = 0L
 
@@ -328,7 +410,7 @@ object ZenGeckoManager {
         val now = System.currentTimeMillis()
         val host = runCatching { android.net.Uri.parse(uri).host }.getOrNull()
         return now - lastUserTouchAt > USER_GESTURE_WINDOW_MS ||
-            now - lastPopupAt < 1000L ||
+            now - lastPopupAt < 2500L ||
             com.example.privacy.ZenAdBlockList.isBlockedHost(host)
     }
 
