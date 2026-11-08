@@ -133,6 +133,9 @@ fun ZenGeckoViewPort(
                 var touchStartX = 0f
                 var touchStartY = 0f
                 setOnTouchListener { _, event ->
+                    if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_UP) {
+                        ZenGeckoManager.noteUserTouch()
+                    }
                     if (currentUiState.isInPictureInPictureMode) return@setOnTouchListener false
                     val densityMetrics = ctx.resources.displayMetrics
                     val edgeThresholdPx = 28f * densityMetrics.density

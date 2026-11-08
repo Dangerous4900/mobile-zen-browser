@@ -146,8 +146,25 @@ object ZenGeckoManager {
             }
 
             override fun onNewSession(s: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
+                if (shouldBlockPopup(uri)) return GeckoResult.fromValue(null)
+                lastPopupAt = System.currentTimeMillis()
                 callback.onOpenNewTab(uri)
                 return null
+            }
+
+            // Tab-under / redirect ads: block navigations to ad hosts and app-launching schemes the user didn't tap.
+            override fun onLoadRequest(
+                s: GeckoSession,
+                request: GeckoSession.NavigationDelegate.LoadRequest
+            ): GeckoResult<org.mozilla.geckoview.AllowOrDeny>? {
+                val uri = request.uri
+                val userInitiated = System.currentTimeMillis() - lastUserTouchAt < USER_GESTURE_WINDOW_MS
+                val scheme = runCatching { android.net.Uri.parse(uri).scheme?.lowercase() }.getOrNull()
+                val web = scheme == "http" || scheme == "https" || scheme == "about" || scheme == "data" || scheme == "blob" || scheme == "resource" || scheme == "moz-extension"
+                val host = runCatching { android.net.Uri.parse(uri).host }.getOrNull()
+                val deny = (!web && !userInitiated) ||
+                    (web && !userInitiated && com.example.privacy.ZenAdBlockList.isBlockedHost(host))
+                return if (deny) GeckoResult.fromValue(org.mozilla.geckoview.AllowOrDeny.DENY) else null
             }
         }
 

@@ -609,14 +609,14 @@ fun ZenBrowserScreen(
             }
             if (blurEnabled && !sidebarPinnedOpen && !uiState.isInPictureInPictureMode) {
                 val before = softwareBlurredBackdrop
-                val full = captureWindowWithSurfacesOrNull(localView)
-                if (full != null) {
-                    val snapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                        com.example.ui.blur.ZenBackdropBlur.toSnapshot(full).also { if (full !== it.bitmap) full.recycle() }
-                    }
-                    backdropSnapshot = snapshot
-                    // Wait (briefly) for the blurred version of this exact snapshot before sliding the panel in.
-                    kotlinx.coroutines.withTimeoutOrNull(350L) {
+                // Hard cap: a slow capture must never delay opening the panel (worst case it shows the last blur).
+                kotlinx.coroutines.withTimeoutOrNull(300L) {
+                    val full = captureWindowWithSurfacesOrNull(localView)
+                    if (full != null) {
+                        val snapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                            com.example.ui.blur.ZenBackdropBlur.toSnapshot(full).also { if (full !== it.bitmap) full.recycle() }
+                        }
+                        backdropSnapshot = snapshot
                         androidx.compose.runtime.snapshotFlow { softwareBlurredBackdrop }
                             .first { it != null && it !== before }
                     }

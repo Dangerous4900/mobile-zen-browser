@@ -211,6 +211,17 @@ class MainActivity : FragmentActivity() {
         } catch (_: Exception) {}
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Safety net: if a PiP exit callback was missed, don't stay stuck in PiP mode (that blocks the side panel).
+        if (!isInPictureInPictureMode) {
+            pipWindow = false
+            if (viewModelRef?.uiState?.value?.isInPictureInPictureMode == true) {
+                viewModelRef?.setPictureInPictureMode(false)
+            }
+        }
+    }
+
     override fun onPause() {
         super.onPause()
         viewModelRef?.setSidebarOpen(false)
