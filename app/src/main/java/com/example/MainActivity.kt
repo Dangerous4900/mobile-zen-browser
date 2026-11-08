@@ -46,8 +46,19 @@ class MainActivity : FragmentActivity() {
         ZenRepository(database.zenDao(), applicationContext)
     }
 
+    private var pendingFileResult: ((List<android.net.Uri>) -> Unit)? = null
+    private val fileChooser = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        pendingFileResult?.invoke(uris ?: emptyList())
+        pendingFileResult = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.gecko.ZenGeckoManager.filePicker = { _, types, onResult ->
+            pendingFileResult?.invoke(emptyList())
+            pendingFileResult = onResult
+            try { fileChooser.launch(types) } catch (_: Exception) { pendingFileResult = null; onResult(emptyList()) }
+        }
         enableEdgeToEdge()
         com.example.privacy.ZenAdBlockList.load(applicationContext)
 
@@ -63,6 +74,33 @@ class MainActivity : FragmentActivity() {
             val notificationPermissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestPermission()
             ) { _ -> }
+
+            // File access: asked once on first launch (media read on Android 13+, storage on older versions).
+            val filePermissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestMultiplePermissions()
+            ) { _ -> }
+            LaunchedEffect(Unit) {
+                val prefs = getSharedPreferences("zen_prefs", MODE_PRIVATE)
+                if (!prefs.getBoolean("asked_file_permission", false)) {
+                    val wanted = when {
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
+                            android.Manifest.permission.READ_MEDIA_IMAGES,
+                            android.Manifest.permission.READ_MEDIA_VIDEO,
+                            android.Manifest.permission.READ_MEDIA_AUDIO
+                        )
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                        else -> arrayOf(
+                            android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                            android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                        )
+                    }
+                    val missing = wanted.filter {
+                        ContextCompat.checkSelfPermission(applicationContext, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    }
+                    prefs.edit().putBoolean("asked_file_permission", true).apply()
+                    if (missing.isNotEmpty()) filePermissionLauncher.launch(missing.toTypedArray())
+                }
+            }
 
             LaunchedEffect(Unit) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

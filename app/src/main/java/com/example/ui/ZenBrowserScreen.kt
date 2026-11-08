@@ -331,6 +331,13 @@ fun ZenBrowserScreen(
         }
     }
 
+    DisposableEffect(Unit) {
+        com.example.gecko.ZenGeckoManager.downloadSink = { name, url, mime, bytes, ok ->
+            if (ok) viewModel.addDownloadItem(name, url, mime, bytes) else viewModel.showBanner("Download failed: $name")
+        }
+        onDispose { com.example.gecko.ZenGeckoManager.downloadSink = null }
+    }
+
     val onDismissMediaBar: () -> Unit = {
         val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
         if (tabId.isNotBlank()) {

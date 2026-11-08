@@ -29,12 +29,22 @@ interface ZenGeckoCallback {
 object ZenGeckoManager {
     @Volatile
     private var runtime: GeckoRuntime? = null
+    @Volatile private var appContext: Context? = null
+
+    /** Set by the UI: called on the main thread when a page download finished or failed. */
+    @Volatile var downloadSink: ((fileName: String, url: String, mimeType: String, bytes: Long, ok: Boolean) -> Unit)? = null
+
+    /** Set by MainActivity: opens the system file chooser for <input type=file> and reports the chosen uris. */
+    @Volatile var filePicker: ((multiple: Boolean, mimeTypes: Array<String>, onResult: (List<android.net.Uri>) -> Unit) -> Unit)? = null
+
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val sessionPool = ConcurrentHashMap<String, GeckoSession>()
     private val tabSettings = ConcurrentHashMap<String, Boolean>() // tabId -> isDesktopMode
     val activeMediaSessions = ConcurrentHashMap<String, MediaSession>() // tabId -> MediaSession
 
     fun getOrCreateRuntime(context: Context): GeckoRuntime {
+        appContext = context.applicationContext
         return runtime ?: synchronized(this) {
             runtime ?: run {
                 val settings = GeckoRuntimeSettings.Builder()
@@ -185,6 +195,52 @@ object ZenGeckoManager {
         session.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(s: GeckoSession, title: String?) {
                 currentTitle = title
+            }
+
+            // Anything the page serves as a download (attachments, archives, apk, pdf "save", ...).
+            override fun onExternalResponse(s: GeckoSession, response: org.mozilla.geckoview.WebResponse) {
+                val ctx = appContext ?: return
+                val body = response.body ?: return
+                val headers = response.headers
+                val mime = headers.entries.firstOrNull { it.key.equals("content-type", true) }?.value?.substringBefore(';')?.trim().orEmpty()
+                val name = com.example.downloads.ZenDownloader.fileNameFor(response.uri, headers, mime)
+                com.example.downloads.ZenDownloader.save(ctx, name, mime, body) { ok, bytes ->
+                    mainHandler.post { downloadSink?.invoke(name, response.uri, mime, bytes, ok) }
+                }
+            }
+        }
+
+        session.promptDelegate = object : GeckoSession.PromptDelegate {
+            // Pop-up windows the engine would otherwise ask about: always deny.
+            override fun onPopupPrompt(
+                s: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.PopupPrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+                GeckoResult.fromValue(prompt.confirm(org.mozilla.geckoview.AllowOrDeny.DENY))
+
+            // <input type="file"> (uploads).
+            override fun onFilePrompt(
+                s: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.FilePrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? {
+                val ctx = appContext
+                val picker = filePicker
+                if (ctx == null || picker == null) return GeckoResult.fromValue(prompt.dismiss())
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                val multiple = prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE
+                val types = prompt.mimeTypes?.takeIf { it.isNotEmpty() } ?: arrayOf("*/*")
+                mainHandler.post {
+                    picker(multiple, types) { uris ->
+                        result.complete(
+                            when {
+                                uris.isEmpty() -> prompt.dismiss()
+                                multiple -> prompt.confirm(ctx, uris.toTypedArray())
+                                else -> prompt.confirm(ctx, uris.first())
+                            }
+                        )
+                    }
+                }
+                return result
             }
         }
 
