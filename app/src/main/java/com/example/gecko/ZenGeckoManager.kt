@@ -261,6 +261,21 @@ object ZenGeckoManager {
         }
     }
 
+    private const val USER_GESTURE_WINDOW_MS = 1500L
+    @Volatile var lastUserTouchAt = 0L
+    @Volatile private var lastPopupAt = 0L
+
+    fun noteUserTouch() { lastUserTouchAt = System.currentTimeMillis() }
+
+    /** A page may open a new tab only right after a real tap, never to an ad host, and not repeatedly. */
+    private fun shouldBlockPopup(uri: String): Boolean {
+        val now = System.currentTimeMillis()
+        val host = runCatching { android.net.Uri.parse(uri).host }.getOrNull()
+        return now - lastUserTouchAt > USER_GESTURE_WINDOW_MS ||
+            now - lastPopupAt < 1000L ||
+            com.example.privacy.ZenAdBlockList.isBlockedHost(host)
+    }
+
     fun getSession(tabId: String): GeckoSession? = sessionPool[tabId]
 
     fun removeSession(tabId: String) {
