@@ -214,6 +214,7 @@ class ZenWebViewController {
         onGoBackTriggered?.invoke()
         val gs = geckoSession
         if (gs != null) {
+            com.example.gecko.ZenGeckoManager.requestSaveCurrentScroll()
             if (canGoBackGecko) {
                 gs.goBack()
             } else {
@@ -295,6 +296,7 @@ class ZenWebViewController {
     fun reload() {
         val gs = geckoSession
         if (gs != null) {
+            com.example.gecko.ZenGeckoManager.requestSaveCurrentScroll()
             gs.reload()
             return
         }
@@ -838,12 +840,14 @@ fun ZenWebPaneView(
     onGetTabHistoryEntries: (String) -> List<com.example.data.HistoryNavEntry> = { emptyList() },
     onOpenSidebar: () -> Unit = {},
     onSavePassword: (PasswordEntity) -> Unit = {},
+    onStartAdmDownloadRequest: (com.example.downloads.AdmDownloadSubmission) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (tab.url.startsWith("zen://search")) {
         DisposableEffect(tab.id, isFocusedPane) {
             if (isFocusedPane) {
                 controller.webView = null
+                controller.geckoSession = null
                 controller.onGoBackFallback = {
                     val prevUrl = onPopTabHistory(tab.id, tab.url)
                     if (!prevUrl.isNullOrBlank() && prevUrl != tab.url) {
@@ -882,6 +886,7 @@ fun ZenWebPaneView(
         DisposableEffect(tab.id, isFocusedPane) {
             if (isFocusedPane) {
                 controller.webView = null
+                controller.geckoSession = null
                 controller.onGoBackFallback = {
                     val prevUrl = onPopTabHistory(tab.id, tab.url)
                     if (!prevUrl.isNullOrBlank() && prevUrl != tab.url) {
@@ -947,6 +952,7 @@ fun ZenWebPaneView(
         DisposableEffect(tab.id, isFocusedPane) {
             if (isFocusedPane) {
                 controller.webView = null
+                controller.geckoSession = null
                 controller.onGoBackFallback = null
                 onProgressChanged(100, false, false)
             }
@@ -1035,6 +1041,12 @@ fun ZenWebPaneView(
     }
     var isUserInteractingWithScroll by remember(tab.id) { mutableStateOf(false) }
 
+    LaunchedEffect(uiState.isSidebarOpen) {
+        if (uiState.isSidebarOpen) {
+            longPressedLinkUrl = null
+        }
+    }
+
     val (webView, isNewlyCreated) = remember(tab.id) {
         ZenWebViewManager.getOrCreate(context, tab.id) { ctx ->
             var touchStartY = 0f
@@ -1053,6 +1065,9 @@ fun ZenWebPaneView(
                 isBackgroundPlayAllowed = { currentUiState.sidebarConfig.backgroundPlayEnabled }
                 isLongClickable = true
                 setOnLongClickListener { wv ->
+                    if (currentUiState.isSidebarOpen || com.example.gecko.ZenGeckoManager.isSidebarOpen) {
+                        return@setOnLongClickListener false
+                    }
                     val hitResult = (wv as? WebView)?.hitTestResult
                     if (hitResult != null) {
                         val linkUrl = when (hitResult.type) {
@@ -1129,6 +1144,42 @@ fun ZenWebPaneView(
                         }
                         android.view.MotionEvent.ACTION_MOVE -> {
                             isUserInteractingWithScroll = true
+                            val dx = event.rawX - touchStartX
+                            val dy = event.rawY - touchStartY
+                            val absDx = kotlin.math.abs(dx)
+                            val absDy = kotlin.math.abs(dy)
+
+                            // Side swipe gesture detection (open sidebar / navigate back)
+                            if (!hasTriggeredHorizontalSwipe && !isPullingDownToRefresh && absDx > 20f * densityMetrics.density && absDx > absDy * 1.20f) {
+                                val swipeMode = currentUiState.sidebarConfig.horizontalSwipeMode
+
+                                if (swipeMode == com.example.data.HorizontalSwipeNavigationMode.SWIPE_RIGHT_PANEL_LEFT_BACK) {
+                                    if (dx > 0) { // Swipe Right -> Open Sidebar
+                                        hasTriggeredHorizontalSwipe = true
+                                        wv.parent?.requestDisallowInterceptTouchEvent(true)
+                                        onOpenSidebar()
+                                        return@setOnTouchListener true
+                                    } else if (dx < 0) { // Swipe Left -> Go Back
+                                        hasTriggeredHorizontalSwipe = true
+                                        wv.parent?.requestDisallowInterceptTouchEvent(true)
+                                        controller.goBack()
+                                        return@setOnTouchListener true
+                                    }
+                                } else { // SWIPE_LEFT_PANEL_RIGHT_BACK
+                                    if (dx < 0) { // Swipe Left -> Open Sidebar
+                                        hasTriggeredHorizontalSwipe = true
+                                        wv.parent?.requestDisallowInterceptTouchEvent(true)
+                                        onOpenSidebar()
+                                        return@setOnTouchListener true
+                                    } else if (dx > 0) { // Swipe Right -> Go Back
+                                        hasTriggeredHorizontalSwipe = true
+                                        wv.parent?.requestDisallowInterceptTouchEvent(true)
+                                        controller.goBack()
+                                        return@setOnTouchListener true
+                                    }
+                                }
+                            }
+
                             if (isPullingDownToRefresh) {
                                 isPullingGestureActive = true
                                 val rawPull = (event.rawY - pullEngageY).coerceAtLeast(10f)
@@ -1145,9 +1196,9 @@ fun ZenWebPaneView(
                                 }
 
                                 if (startedAtTopOfPage && isAtTopNow) {
-                                    val dy = event.rawY - touchStartY
-                                    val dx = kotlin.math.abs(event.rawX - touchStartX)
-                                    if (dy > 16f && dy > dx * 1.25f) {
+                                    val pullDy = event.rawY - touchStartY
+                                    val pullDx = kotlin.math.abs(event.rawX - touchStartX)
+                                    if (pullDy > 16f && pullDy > pullDx * 1.25f) {
                                         isPullingDownToRefresh = true
                                         isPullingGestureActive = true
                                         pullEngageY = event.rawY - 16f
@@ -1174,38 +1225,6 @@ fun ZenWebPaneView(
                                     pullDownDistancePx = 0f
                                 }
                                 return@setOnTouchListener true
-                            } else {
-                                val finalDx = event.rawX - touchStartX
-                                val finalDy = event.rawY - touchStartY
-                                val absFinalDx = kotlin.math.abs(finalDx)
-                                val absFinalDy = kotlin.math.abs(finalDy)
-                                val startedFromLeftEdge = touchStartX <= edgeThresholdPx
-                                val startedFromRightEdge = touchStartX >= (screenWidthPx - edgeThresholdPx)
-
-                                // ACTION_CANCEL means the system took the gesture (home / PiP / back swipe).
-                                // Treating it as a finished edge swipe opened the side panel while entering PiP.
-                                val wasCancelled = event.actionMasked == android.view.MotionEvent.ACTION_CANCEL
-                                if (!wasCancelled && (startedFromLeftEdge || startedFromRightEdge) && absFinalDx > 60f && absFinalDx > absFinalDy * 1.35f) {
-                                    hasTriggeredHorizontalSwipe = true
-                                    val swipeMode = currentUiState.sidebarConfig.horizontalSwipeMode
-                                    if (swipeMode == com.example.data.HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
-                                        if (finalDx < -60f && startedFromRightEdge) {
-                                            wv.post { currentOnOpenSidebar() }
-                                            return@setOnTouchListener true
-                                        } else if (finalDx > 60f && startedFromLeftEdge) {
-                                            wv.post { controller.goBack() }
-                                            return@setOnTouchListener true
-                                        }
-                                    } else {
-                                        if (finalDx < -60f && startedFromRightEdge) {
-                                            wv.post { controller.goBack() }
-                                            return@setOnTouchListener true
-                                        } else if (finalDx > 60f && startedFromLeftEdge) {
-                                            wv.post { currentOnOpenSidebar() }
-                                            return@setOnTouchListener true
-                                        }
-                                    }
-                                }
                             }
                             if (!isPullRefreshing) {
                                 pullDownDistancePx = 0f
@@ -1214,6 +1233,26 @@ fun ZenWebPaneView(
                         }
                     }
                     false
+                }
+                setDownloadListener { downloadUrl, userAgent, contentDisposition, mimeType, contentLength ->
+                    val fileName = android.webkit.URLUtil.guessFileName(downloadUrl, contentDisposition, mimeType)
+                    val cat = when {
+                        mimeType?.contains("video") == true || fileName.endsWith(".mp4") || fileName.endsWith(".mkv") -> com.example.downloads.AdmCategory.VIDEO
+                        mimeType?.contains("audio") == true || fileName.endsWith(".mp3") || fileName.endsWith(".flac") -> com.example.downloads.AdmCategory.AUDIO
+                        mimeType?.contains("pdf") == true || fileName.endsWith(".pdf") || fileName.endsWith(".doc") -> com.example.downloads.AdmCategory.DOCUMENT
+                        fileName.endsWith(".zip") || fileName.endsWith(".rar") || fileName.endsWith(".7z") -> com.example.downloads.AdmCategory.ARCHIVE
+                        fileName.endsWith(".apk") || fileName.endsWith(".exe") -> com.example.downloads.AdmCategory.SOFTWARE
+                        else -> com.example.downloads.AdmCategory.ALL
+                    }
+                    val submission = com.example.downloads.AdmDownloadSubmission(
+                        fileName = if (fileName.isNotBlank()) fileName else "download_${System.currentTimeMillis()}",
+                        url = downloadUrl,
+                        totalBytes = if (contentLength > 0) contentLength else 15_000_000L,
+                        category = cat
+                    )
+                    post {
+                        onStartAdmDownloadRequest(submission)
+                    }
                 }
                 setOnScrollChangeListener { v, _, scrollY, _, _ ->
                 val currentWv = v as? WebView ?: return@setOnScrollChangeListener
@@ -1239,7 +1278,7 @@ fun ZenWebPaneView(
                 setSupportZoom(true)
                 builtInZoomControls = true
                 displayZoomControls = false
-                setSupportMultipleWindows(false)
+                setSupportMultipleWindows(true)
                 cacheMode = WebSettings.LOAD_DEFAULT
                 userAgentString = if (isDesktopMode) DESKTOP_USER_AGENT else defaultMobileUa
             }
@@ -1742,6 +1781,7 @@ fun ZenWebPaneView(
                 onMediaStateChanged = onMediaStateChanged,
                 onOpenInNewTab = onOpenInNewTab,
                 onOpenSidebar = currentOnOpenSidebar,
+                onInstallExtensionFromAmo = onInstallExtensionFromAmo,
                 modifier = Modifier.fillMaxSize()
             )
             if (false) {
@@ -1797,6 +1837,8 @@ fun ZenWebPaneView(
                             val shouldBlockAds = adLevel != com.example.data.AdBlockerLevel.OFF || currentPrivacyCfg.blockTrackersAndAds || isUblockActive
 
                             if (!isMainFrame && shouldBlockAds) {
+                                val reqHost = try { Uri.parse(reqUrl).host } catch (_: Exception) { null }
+                                val isHostBlocked = ZenAdBlockList.isBlockedHost(reqHost)
                                 val blockedEvent = ZenPrivacyEngine.matchTrackerRequest(reqUrl)
                                 val isAggressiveHigh = adLevel == com.example.data.AdBlockerLevel.HIGH && (
                                     lowerUrl.contains("google-analytics.com") ||
@@ -1807,19 +1849,35 @@ fun ZenWebPaneView(
                                     lowerUrl.contains("doubleclick.net") ||
                                     lowerUrl.contains("scorecardresearch.com")
                                 )
-                                if (blockedEvent != null || ZenPrivacyEngine.isAdOrTrackerUrl(reqUrl) || isAggressiveHigh) {
+                                if (blockedEvent != null || isHostBlocked || ZenPrivacyEngine.isAdOrTrackerUrl(reqUrl) || isAggressiveHigh) {
                                     val event = blockedEvent ?: BlockedTrackerEvent(
                                         domain = ZenPrivacyEngine.extractHostDisplay(reqUrl),
-                                        category = if (isAggressiveHigh) "Telemetry/Tracker" else "Ad Network"
+                                        category = if (isHostBlocked) "Ad Network (EasyList/uBlock)" else if (isAggressiveHigh) "Telemetry/Tracker" else "Ad Network"
                                     )
                                     view?.post { onTrackerBlocked(event) }
+                                    val acceptHeader = request.requestHeaders?.get("Accept")?.lowercase().orEmpty()
+                                    val isImage = acceptHeader.contains("image/") ||
+                                        lowerUrl.endsWith(".png") || lowerUrl.endsWith(".jpg") || lowerUrl.endsWith(".jpeg") ||
+                                        lowerUrl.endsWith(".gif") || lowerUrl.endsWith(".webp") || lowerUrl.endsWith(".svg") ||
+                                        lowerUrl.endsWith(".ico")
                                     val isJson = lowerUrl.contains("json") || lowerUrl.contains("/pagead/") || lowerUrl.contains("/api/stats/ads") || lowerUrl.contains("youtube.com")
-                                    val mimeType = if (isJson) "application/json" else if (reqUrl.contains(".js")) "application/javascript" else "text/plain"
-                                    val responseBody = if (isJson) "{}" else ""
+                                    val isJs = lowerUrl.contains(".js") || acceptHeader.contains("javascript")
+                                    val isCss = lowerUrl.endsWith(".css") || acceptHeader.contains("text/css")
+
+                                    val (mimeType, bodyBytes) = when {
+                                        isImage -> "image/png" to android.util.Base64.decode(
+                                            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+                                            android.util.Base64.DEFAULT
+                                        )
+                                        isJson -> "application/json" to "{}".toByteArray(Charsets.UTF_8)
+                                        isJs -> "application/javascript" to "/* blocked by uBlock */".toByteArray(Charsets.UTF_8)
+                                        isCss -> "text/css" to "".toByteArray(Charsets.UTF_8)
+                                        else -> "text/plain" to ByteArray(0)
+                                    }
                                     return WebResourceResponse(
                                         mimeType,
                                         "utf-8",
-                                        ByteArrayInputStream(responseBody.toByteArray(Charsets.UTF_8))
+                                        ByteArrayInputStream(bodyBytes)
                                     )
                                 }
                             }
@@ -1853,6 +1911,35 @@ fun ZenWebPaneView(
                                 onInstallExtensionFromAmo(targetUrl, view?.title)
                                 return true
                             }
+                            // Intercept direct file downloads (.apk, .zip, .pdf, .mp3, .mp4, .mkv, .iso, .dmg, .rar, .7z, .exe, etc.)
+                            val lowerTarget = targetUrl.lowercase()
+                            val cleanPath = lowerTarget.substringBefore('?').substringBefore('#')
+                            val isDirectFileDownload = listOf(
+                                ".zip", ".apk", ".pdf", ".mp3", ".mp4", ".mkv", ".iso", ".dmg", ".rar",
+                                ".7z", ".tar", ".gz", ".exe", ".csv", ".docx", ".xlsx", ".epub", ".pptx",
+                                ".mov", ".avi", ".flv", ".torrent", ".bin"
+                            ).any { ext -> cleanPath.endsWith(ext) }
+
+                            if (isDirectFileDownload) {
+                                val fileName = android.webkit.URLUtil.guessFileName(targetUrl, null, null)
+                                val cat = when {
+                                    lowerTarget.contains("video") || fileName.endsWith(".mp4") || fileName.endsWith(".mkv") -> com.example.downloads.AdmCategory.VIDEO
+                                    lowerTarget.contains("audio") || fileName.endsWith(".mp3") || fileName.endsWith(".flac") -> com.example.downloads.AdmCategory.AUDIO
+                                    fileName.endsWith(".pdf") || fileName.endsWith(".doc") || fileName.endsWith(".docx") -> com.example.downloads.AdmCategory.DOCUMENT
+                                    fileName.endsWith(".zip") || fileName.endsWith(".rar") || fileName.endsWith(".7z") -> com.example.downloads.AdmCategory.ARCHIVE
+                                    fileName.endsWith(".apk") || fileName.endsWith(".exe") -> com.example.downloads.AdmCategory.SOFTWARE
+                                    else -> com.example.downloads.AdmCategory.ALL
+                                }
+                                val submission = com.example.downloads.AdmDownloadSubmission(
+                                    fileName = if (fileName.isNotBlank()) fileName else "file_${System.currentTimeMillis()}",
+                                    url = targetUrl,
+                                    totalBytes = 15_000_000L,
+                                    category = cat
+                                )
+                                view?.post { onStartAdmDownloadRequest(submission) }
+                                return true
+                            }
+
                             if (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) {
                                 val curUrl = view?.url ?: tab.url
                                 val curY = view?.scrollY ?: 0
@@ -2094,7 +2181,63 @@ fun ZenWebPaneView(
                             isUserGesture: Boolean,
                             resultMsg: android.os.Message?
                         ): Boolean {
+                            val isUblockActive = currentUiState.firefoxExtensions.any {
+                                it.id == "ff_ublock_origin" && it.isInstalled && it.isEnabled
+                            }
+                            val shouldBlock = currentPrivacyCfg.adBlockerLevel != com.example.data.AdBlockerLevel.OFF || currentPrivacyCfg.blockTrackersAndAds || isUblockActive
+
+                            if (shouldBlock) {
+                                (resultMsg?.obj as? WebView.WebViewTransport)?.webView = null
+                                resultMsg?.sendToTarget()
+                                val event = BlockedTrackerEvent(
+                                    domain = view?.url?.let { ZenPrivacyEngine.extractHostDisplay(it) } ?: "Popup Window",
+                                    category = "Blocked Popup Window"
+                                )
+                                view?.post { onTrackerBlocked(event) }
+                                return true
+                            }
                             return false
+                        }
+
+                        override fun onJsAlert(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            result: android.webkit.JsResult?
+                        ): Boolean {
+                            result?.cancel()
+                            return true
+                        }
+
+                        override fun onJsConfirm(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            result: android.webkit.JsResult?
+                        ): Boolean {
+                            result?.cancel()
+                            return true
+                        }
+
+                        override fun onJsPrompt(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            defaultValue: String?,
+                            result: android.webkit.JsPromptResult?
+                        ): Boolean {
+                            result?.cancel()
+                            return true
+                        }
+
+                        override fun onJsBeforeUnload(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            result: android.webkit.JsResult?
+                        ): Boolean {
+                            result?.confirm()
+                            return true
                         }
 
                         override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
@@ -2197,12 +2340,8 @@ fun ZenWebPaneView(
                 shape = androidx.compose.foundation.shape.CircleShape,
                 color = Color(0xFF141418).copy(alpha = 0.92f * iconAlpha),
                 border = BorderStroke(
-                    width = 1.dp,
-                    color = if (normalizedProgress >= 1f || isPullRefreshing) {
-                        Color(0xFFF4F4F6).copy(alpha = iconAlpha)
-                    } else {
-                        Color(0xFF3F3F46).copy(alpha = iconAlpha)
-                    }
+                    width = 1.5.dp,
+                    color = Color.White.copy(alpha = iconAlpha)
                 ),
                 shadowElevation = (6f * iconAlpha).dp,
                 modifier = Modifier
@@ -2575,11 +2714,12 @@ fun ZenWebPaneView(
         }
 
         // Link Long-Press Context Menu Overlay (Side Panel blur & transparency styling, no header/URL, no cancel button)
-        longPressedLinkUrl?.let { linkUrl ->
-            Dialog(
-                onDismissRequest = { longPressedLinkUrl = null },
-                properties = DialogProperties(usePlatformDefaultWidth = false)
-            ) {
+        if (!uiState.isSidebarOpen && !uiState.isInPictureInPictureMode) {
+            longPressedLinkUrl?.let { linkUrl ->
+                Dialog(
+                    onDismissRequest = { longPressedLinkUrl = null },
+                    properties = DialogProperties(usePlatformDefaultWidth = false)
+                ) {
                 val sidebarCfg = uiState.sidebarConfig
                 val isLiquidGlass = sidebarCfg.liquidGlassEnabled
                 val panelAlpha = if (isLiquidGlass) {
@@ -2790,6 +2930,7 @@ fun ZenWebPaneView(
         }
     }
 }
+}
 
 private fun getLanguageDisplayName(code: String?): String {
     return when (code?.lowercase()?.take(2)) {
@@ -2854,17 +2995,25 @@ fun ZenHomeStartPage(
             .pointerInput(cfg.horizontalSwipeMode) {
                 var totalDrag = 0f
                 var triggered = false
+                var startedNearSystemEdge = false
+                val systemEdgePx = 40.dp.toPx()
                 detectHorizontalDragGestures(
-                    onDragStart = { totalDrag = 0f; triggered = false },
-                    onDragEnd = { totalDrag = 0f; triggered = false },
-                    onDragCancel = { totalDrag = 0f; triggered = false },
+                    onDragStart = { startOffset ->
+                        totalDrag = 0f
+                        triggered = false
+                        startedNearSystemEdge = startOffset.x <= systemEdgePx ||
+                            startOffset.x >= (size.width - systemEdgePx)
+                    },
+                    onDragEnd = { totalDrag = 0f; triggered = false; startedNearSystemEdge = false },
+                    onDragCancel = { totalDrag = 0f; triggered = false; startedNearSystemEdge = false },
                     onHorizontalDrag = { change, dragAmount ->
+                        if (startedNearSystemEdge) return@detectHorizontalDragGestures
                         totalDrag += dragAmount
                         if (!triggered) {
                             val openThresholdCrossed = if (cfg.horizontalSwipeMode == com.example.data.HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
-                                totalDrag < -45f // Swipe left opens side panel
+                                totalDrag < -24f // Swipe left opens side panel
                             } else {
-                                totalDrag > 45f  // Swipe right opens side panel
+                                totalDrag > 24f  // Swipe right opens side panel
                             }
                             if (openThresholdCrossed) {
                                 triggered = true

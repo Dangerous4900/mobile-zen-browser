@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.AdBlockerLevel
+import com.example.data.BiometricGracePeriod
 import com.example.data.BlockedTrackerEvent
 import com.example.data.BackSwipeSidebarMode
 import com.example.data.CustomSearchEngineEntity
@@ -21,6 +22,7 @@ import com.example.data.MediaPlaybackState
 import com.example.data.NewTabPosition
 import com.example.data.NewTabSwipeGestureAction
 import com.example.data.PrivacyConfig
+import com.example.data.SidebarBoxTab
 import com.example.data.SidebarColorMode
 import com.example.data.SidebarConfig
 import com.example.data.SidebarPosition
@@ -40,8 +42,10 @@ import com.example.data.ZenRepository
 import com.example.privacy.ZenPrivacyEngine
 import com.example.ui.theme.ZenAccentTheme
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -87,6 +91,10 @@ data class ZenBrowserUiState(
     val splitRatio: Float = 0.5f,
     val focusedPane: FocusedPane = FocusedPane.PRIMARY,
     val isSidebarOpen: Boolean = false,
+    val isSidebarBoxMode: Boolean = false,
+    val activeSidebarBoxTab: SidebarBoxTab = SidebarBoxTab.HISTORY,
+    val isAiSidePanelOpen: Boolean = false,
+    val activeAiProviderId: String = com.example.data.AiSidePanelProvider.CHATGPT.id,
     val isCompactFullscreen: Boolean = false,
     val isReaderModeEnabled: Boolean = false,
     val isPrivateGlanceMode: Boolean = false,
@@ -296,6 +304,10 @@ private data class TransientSessionState(
     val splitRatio: Float = 0.5f,
     val focusedPane: FocusedPane = FocusedPane.PRIMARY,
     val isSidebarOpen: Boolean = false,
+    val isSidebarBoxMode: Boolean = false,
+    val activeSidebarBoxTab: SidebarBoxTab = SidebarBoxTab.HISTORY,
+    val isAiSidePanelOpen: Boolean = false,
+    val activeAiProviderId: String = com.example.data.AiSidePanelProvider.CHATGPT.id,
     val isCompactFullscreen: Boolean = false,
     val isReaderModeEnabled: Boolean = false,
     val isPrivateGlanceMode: Boolean = false,
@@ -402,6 +414,10 @@ class ZenBrowserViewModel(
             splitRatio = session.splitRatio,
             focusedPane = session.focusedPane,
             isSidebarOpen = session.isSidebarOpen,
+            isSidebarBoxMode = session.isSidebarBoxMode,
+            activeSidebarBoxTab = session.activeSidebarBoxTab,
+            isAiSidePanelOpen = session.isAiSidePanelOpen,
+            activeAiProviderId = session.activeAiProviderId,
             isCompactFullscreen = session.isCompactFullscreen,
             isReaderModeEnabled = session.isReaderModeEnabled,
             isPrivateGlanceMode = session.isPrivateGlanceMode,
@@ -429,7 +445,7 @@ class ZenBrowserViewModel(
             canGoForward = session.canGoForward,
             findInPageQuery = session.findInPageQuery,
             isFindInPageVisible = session.isFindInPageVisible,
-            isInPictureInPictureMode = false,
+            isInPictureInPictureMode = session.isInPictureInPictureMode,
             isAppLocked = session.isAppLocked,
             isImportTabsDialogVisible = session.isImportTabsDialogVisible,
             statusBannerMessage = session.statusBannerMessage,
@@ -524,10 +540,15 @@ class ZenBrowserViewModel(
         }
     }
 
+    private var lastBackgroundedAtMs: Long = 0L
+
     fun onAppBackgroundedOrClosed() {
         val cfg = localSidebarConfig.value
         val curWs = sessionState.value.activeWorkspaceId
         val curTab = sessionState.value.activeTabId
+        if (!sessionState.value.isInPictureInPictureMode) {
+            lastBackgroundedAtMs = System.currentTimeMillis()
+        }
         viewModelScope.launch {
             if (cfg.closePrivateOnAppClose) {
                 repository.deletePrivateTabsAndWorkspaces()
@@ -539,6 +560,27 @@ class ZenBrowserViewModel(
             if (curWs.isNotBlank() && curTab.isNotBlank()) {
                 repository.saveLastSessionState(curWs, curTab)
             }
+        }
+    }
+
+    fun evaluateBiometricLockOnForeground(isInPipNow: Boolean) {
+        val cfg = localSidebarConfig.value
+        if (!cfg.biometricLockEnabled) {
+            lastBackgroundedAtMs = 0L
+            return
+        }
+        if (isInPipNow || sessionState.value.isInPictureInPictureMode) {
+            return
+        }
+        val bgAt = lastBackgroundedAtMs
+        lastBackgroundedAtMs = 0L
+        if (bgAt <= 0L) return
+        if (cfg.biometricGracePeriod == BiometricGracePeriod.UNTIL_CLOSED) {
+            return
+        }
+        val elapsed = System.currentTimeMillis() - bgAt
+        if (elapsed >= cfg.biometricGracePeriod.durationMs) {
+            sessionState.update { it.copy(isAppLocked = true) }
         }
     }
 
@@ -556,29 +598,153 @@ class ZenBrowserViewModel(
         updateSidebarConfig { it.copy(hasCompletedTutorial = true) }
     }
 
+    fun completeSetupWizard(
+        searchEngineId: String,
+        sidebarPosition: SidebarPosition,
+        urlBarPosition: UrlBarPosition,
+        startPageGradientId: String,
+        backgroundPlayEnabled: Boolean,
+        playInWindowPipEnabled: Boolean
+    ) {
+        updatePrivacyToggle(normalSearchEngineId = searchEngineId)
+        updateSidebarConfig {
+            it.copy(
+                hasCompletedTutorial = true,
+                position = sidebarPosition,
+                urlBarPosition = urlBarPosition,
+                startPageGradientId = startPageGradientId,
+                backgroundPlayEnabled = backgroundPlayEnabled,
+                playInWindowPipEnabled = playInWindowPipEnabled
+            )
+        }
+        sessionState.update {
+            it.copy(
+                showTutorialDialog = false,
+                statusBannerMessage = "Zen Browser setup complete"
+            )
+        }
+    }
+
     fun toggleSidebar() {
-        if (!sessionState.value.isSidebarOpen && System.currentTimeMillis() < suppressSidebarOpenUntil) return
-        sessionState.update { it.copy(isSidebarOpen = !it.isSidebarOpen) }
+        val current = sessionState.value
+        val nextOpen = !current.isSidebarOpen
+        if (nextOpen && !canOpenSidebarNow()) return
+        com.example.gecko.ZenGeckoManager.onSidebarStateChanged(nextOpen)
+        sessionState.update {
+            it.copy(
+                isSidebarOpen = nextOpen,
+                isSidebarBoxMode = if (!nextOpen) false else it.isSidebarBoxMode,
+                requestSidebarSearchFocus = if (!nextOpen) false else it.requestSidebarSearchFocus
+            )
+        }
     }
 
     private var suppressSidebarOpenUntil = 0L
 
-    /** Single gate for every path that opens the side panel. */
     private fun canOpenSidebarNow(): Boolean =
-        System.currentTimeMillis() >= suppressSidebarOpenUntil
+        !sessionState.value.isInPictureInPictureMode &&
+            System.currentTimeMillis() >= suppressSidebarOpenUntil
 
-    /** Called when the user starts leaving the app (home/PiP gesture): stray gesture events must not open the panel. */
+    fun suppressSidebarDuringTransition(durationMs: Long = 2500L) {
+        suppressSidebarOpenUntil = maxOf(
+            suppressSidebarOpenUntil,
+            System.currentTimeMillis() + durationMs
+        )
+        sessionState.update {
+            it.copy(
+                isSidebarOpen = false,
+                isSidebarBoxMode = false,
+                isAiSidePanelOpen = false,
+                requestSidebarSearchFocus = false
+            )
+        }
+    }
+
     fun onLeavingApp() {
-        suppressSidebarOpenUntil = System.currentTimeMillis() + 1500L
-        sessionState.update { it.copy(isSidebarOpen = false) }
+        suppressSidebarDuringTransition(2600L)
     }
 
     fun setSidebarOpen(open: Boolean) {
         if (open && !canOpenSidebarNow()) return
+        com.example.gecko.ZenGeckoManager.onSidebarStateChanged(open)
         sessionState.update {
             it.copy(
                 isSidebarOpen = open,
+                isSidebarBoxMode = if (!open) false else it.isSidebarBoxMode,
                 requestSidebarSearchFocus = if (!open) false else it.requestSidebarSearchFocus
+            )
+        }
+    }
+
+    internal fun isSidebarOpenNow(): Boolean = sessionState.value.isSidebarOpen
+
+    internal fun isInPictureInPictureModeNow(): Boolean = sessionState.value.isInPictureInPictureMode
+
+    internal fun isAppLockedNow(): Boolean = sessionState.value.isAppLocked
+
+    internal fun isAiSidePanelOpenNow(): Boolean = sessionState.value.isAiSidePanelOpen
+
+    internal fun activeAiProviderIdNow(): String = sessionState.value.activeAiProviderId
+
+    internal fun isSidebarBoxModeNow(): Boolean = sessionState.value.isSidebarBoxMode
+
+    internal fun enabledSidebarToolsNow(): List<SidebarToolItem> = localSidebarConfig.value.enabledSidebarTools
+
+    fun setSidebarBoxMode(enabled: Boolean) {
+        sessionState.update {
+            it.copy(
+                isSidebarBoxMode = enabled,
+                isAiSidePanelOpen = if (enabled) false else it.isAiSidePanelOpen
+            )
+        }
+    }
+
+    fun toggleSidebarBoxMode() {
+        sessionState.update {
+            val next = !it.isSidebarBoxMode
+            it.copy(
+                isSidebarBoxMode = next,
+                isAiSidePanelOpen = if (next) false else it.isAiSidePanelOpen
+            )
+        }
+    }
+
+    fun selectSidebarBoxTab(tab: SidebarBoxTab) {
+        sessionState.update {
+            it.copy(
+                isSidebarBoxMode = true,
+                isAiSidePanelOpen = false,
+                activeSidebarBoxTab = tab
+            )
+        }
+    }
+
+    fun toggleAiSidePanel() {
+        sessionState.update {
+            val next = !it.isAiSidePanelOpen
+            it.copy(
+                isAiSidePanelOpen = next,
+                isSidebarBoxMode = if (next) false else it.isSidebarBoxMode
+            )
+        }
+    }
+
+    fun setAiSidePanelOpen(open: Boolean) {
+        sessionState.update {
+            it.copy(
+                isAiSidePanelOpen = open,
+                isSidebarBoxMode = if (open) false else it.isSidebarBoxMode
+            )
+        }
+    }
+
+    fun selectAiProvider(providerId: String) {
+        val resolved = com.example.data.AiSidePanelProvider.fromId(providerId).id
+        sessionState.update {
+            it.copy(
+                activeAiProviderId = resolved,
+                isAiSidePanelOpen = true,
+                isSidebarBoxMode = false
             )
         }
     }
@@ -752,16 +918,19 @@ class ZenBrowserViewModel(
             if (sess.isSplitViewEnabled && sess.focusedPane == FocusedPane.SECONDARY) {
                 sess.copy(
                     secondarySplitTabId = tabId,
-                    isSidebarOpen = false
+                    isSidebarOpen = false,
+                    isSidebarBoxMode = false
                 )
             } else {
                 sess.copy(
                     activeWorkspaceId = updatedWorkspaceId,
                     activeTabId = tabId,
-                    isSidebarOpen = false
+                    isSidebarOpen = false,
+                    isSidebarBoxMode = false
                 )
             }
         }
+        noteTabSwitch()
         com.example.gecko.ZenGeckoManager.keepBackgroundSessionsActive()
     }
 
@@ -929,12 +1098,14 @@ class ZenBrowserViewModel(
                         sess.copy(
                             secondarySplitTabId = newTab.id,
                             isSidebarOpen = false,
+                            isSidebarBoxMode = false,
                             statusBannerMessage = if (effectivePrivate) "New Private Tab" else null
                         )
                     } else {
                         sess.copy(
                             activeTabId = newTab.id,
                             isSidebarOpen = false,
+                            isSidebarBoxMode = false,
                             statusBannerMessage = if (effectivePrivate) "New Private Tab" else null
                         )
                     }
@@ -945,6 +1116,33 @@ class ZenBrowserViewModel(
                         statusBannerMessage = "Tab opened in background • '$title'"
                     )
                 }
+            }
+        }
+    }
+
+    fun createNewTabInWorkspace(workspaceId: String) {
+        val state = uiState.value
+        val ws = state.workspaces.find { it.id == workspaceId } ?: return
+        val newTab = TabEntity(
+            id = "tab_${UUID.randomUUID().toString().take(8)}",
+            workspaceId = workspaceId,
+            title = if (ws.isPrivate) "Private Tab" else "New Tab",
+            url = "zen://home",
+            isPinned = false,
+            isEssential = false,
+            isPrivate = ws.isPrivate,
+            sortOrder = calculateNewTabSortOrder(),
+            lastAccessed = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.insertTab(newTab)
+            sessionState.update { sess ->
+                sess.copy(
+                    activeWorkspaceId = workspaceId,
+                    activeTabId = newTab.id,
+                    isSidebarOpen = false,
+                    isSidebarBoxMode = false
+                )
             }
         }
     }
@@ -1011,6 +1209,15 @@ class ZenBrowserViewModel(
         }
     }
 
+    fun clearRecentHistory(hours: Int = 1) {
+        viewModelScope.launch {
+            val cutoff = System.currentTimeMillis() - (hours.coerceAtLeast(1) * 3_600_000L)
+            repository.deleteHistorySince(cutoff)
+            val label = if (hours <= 1) "last hour's history" else "last $hours hours' history"
+            showBanner("Cleared $label")
+        }
+    }
+
     private val downloadEventMutex = kotlinx.coroutines.sync.Mutex()
 
     /** Live progress of a real download (list row + banner when finished). Events are applied in order. */
@@ -1022,7 +1229,13 @@ class ZenBrowserViewModel(
                     showBanner("Download failed: ${e.fileName}")
                     return@withLock
                 }
+                if (e.state == "cancelled") {
+                    repository.deleteDownloadItem(e.id)
+                    showBanner("Download cancelled: ${e.fileName}")
+                    return@withLock
+                }
                 val done = e.state == "completed"
+                val paused = e.state == "paused"
                 val pct = if (e.totalBytes > 0) ((e.downloadedBytes * 100) / e.totalBytes).toInt().coerceIn(0, 100) else 0
                 repository.insertDownloadItem(
                     DownloadItemEntity(
@@ -1031,14 +1244,18 @@ class ZenBrowserViewModel(
                         url = e.url,
                         mimeType = e.mimeType,
                         totalBytes = e.totalBytes,
-                        status = if (done) "completed" else "downloading",
+                        status = when {
+                            done -> "completed"
+                            paused -> "paused"
+                            else -> "downloading"
+                        },
                         downloadedBytes = e.downloadedBytes,
-                        speedBytesPerSec = e.speedBytesPerSec,
-                        etaSeconds = if (!done && e.speedBytesPerSec > 0 && e.totalBytes > e.downloadedBytes)
+                        speedBytesPerSec = if (paused || done) 0L else e.speedBytesPerSec,
+                        etaSeconds = if (!done && !paused && e.speedBytesPerSec > 0 && e.totalBytes > e.downloadedBytes)
                             (e.totalBytes - e.downloadedBytes) / e.speedBytesPerSec else 0L,
                         totalSegments = 100,
                         completedSegments = if (done) 100 else pct,
-                        isResumable = false,
+                        isResumable = !done,
                         sourceDomain = runCatching { java.net.URI(e.url).host ?: "" }.getOrDefault("")
                     )
                 )
@@ -1096,6 +1313,33 @@ class ZenBrowserViewModel(
         }
     }
 
+    private suspend fun fetchOfflineHtmlFallback(url: String, title: String): String = withContext(Dispatchers.IO) {
+        runCatching {
+            val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 10_000
+                readTimeout = 15_000
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Android) ZenBrowser")
+                instanceFollowRedirects = true
+            }
+            if (conn.responseCode in 200..299) {
+                conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    val sb = StringBuilder()
+                    val buf = CharArray(8192)
+                    var total = 0
+                    while (total < 2_000_000) {
+                        val n = reader.read(buf)
+                        if (n < 0) break
+                        sb.append(buf, 0, n)
+                        total += n
+                    }
+                    sb.toString()
+                }
+            } else ""
+        }.getOrDefault("").ifBlank {
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>${title}</title></head><body style=\"background:#101014;color:#f4f4f6;font-family:sans-serif;padding:24px\"><h2>${title}</h2><p style=\"color:#a1a1aa\">Saved reference for <a href=\"${url}\" style=\"color:#818cf8\">${url}</a></p></body></html>"
+        }
+    }
+
     fun saveCurrentPageForOffline(tabId: String, htmlContent: String) {
         val state = uiState.value
         val tab = state.allTabs.find { it.id == tabId } ?: state.focusedTab ?: return
@@ -1104,17 +1348,18 @@ class ZenBrowserViewModel(
             return
         }
         val cleanTitle = tab.title.ifBlank { ZenPrivacyEngine.extractHostDisplay(tab.url) }
-        val bytes = htmlContent.toByteArray(Charsets.UTF_8)
-        val pageId = "off_${UUID.randomUUID().toString().take(8)}"
-        val page = OfflinePageEntity(
-            id = pageId,
-            title = cleanTitle,
-            url = tab.url,
-            htmlContent = htmlContent,
-            timestamp = System.currentTimeMillis(),
-            sizeBytes = bytes.size.toLong()
-        )
         viewModelScope.launch {
+            val resolvedHtml = htmlContent.ifBlank { fetchOfflineHtmlFallback(tab.url, cleanTitle) }
+            val bytes = resolvedHtml.toByteArray(Charsets.UTF_8)
+            val pageId = "off_${UUID.randomUUID().toString().take(8)}"
+            val page = OfflinePageEntity(
+                id = pageId,
+                title = cleanTitle,
+                url = tab.url,
+                htmlContent = resolvedHtml,
+                timestamp = System.currentTimeMillis(),
+                sizeBytes = bytes.size.toLong()
+            )
             repository.insertOfflinePage(page)
             showBanner("Saved '$cleanTitle' for offline reading")
         }
@@ -1126,17 +1371,18 @@ class ZenBrowserViewModel(
             return
         }
         val cleanTitle = tab.title.ifBlank { ZenPrivacyEngine.extractHostDisplay(tab.url) }
-        val bytes = htmlContent.toByteArray(Charsets.UTF_8)
-        val pageId = "off_${UUID.randomUUID().toString().take(8)}"
-        val page = OfflinePageEntity(
-            id = pageId,
-            title = cleanTitle,
-            url = tab.url,
-            htmlContent = htmlContent,
-            timestamp = System.currentTimeMillis(),
-            sizeBytes = if (bytes.isNotEmpty()) bytes.size.toLong() else tab.url.length.toLong()
-        )
         viewModelScope.launch {
+            val resolvedHtml = htmlContent.ifBlank { fetchOfflineHtmlFallback(tab.url, cleanTitle) }
+            val bytes = resolvedHtml.toByteArray(Charsets.UTF_8)
+            val pageId = "off_${UUID.randomUUID().toString().take(8)}"
+            val page = OfflinePageEntity(
+                id = pageId,
+                title = cleanTitle,
+                url = tab.url,
+                htmlContent = resolvedHtml,
+                timestamp = System.currentTimeMillis(),
+                sizeBytes = if (bytes.isNotEmpty()) bytes.size.toLong() else tab.url.length.toLong()
+            )
             repository.insertOfflinePage(page)
             showBanner("Saved '$cleanTitle' for offline reading")
         }
@@ -1416,6 +1662,28 @@ class ZenBrowserViewModel(
         }
     }
 
+    private var lastMediaPlayingAt = 0L
+    private var lastExplicitUserPauseAt = 0L
+
+    fun noteTabSwitch() {
+        com.example.gecko.ZenGeckoManager.noteTabSwitch()
+    }
+
+    fun noteUserMediaPause() {
+        lastExplicitUserPauseAt = System.currentTimeMillis()
+        com.example.gecko.ZenGeckoManager.noteUserMediaPause()
+    }
+
+    fun wasUserMediaPausedRecently(): Boolean =
+        (System.currentTimeMillis() - lastExplicitUserPauseAt) < 2000L
+
+    fun shouldAutoResumeMediaOnPip(): Boolean {
+        val now = System.currentTimeMillis()
+        val wasRecentlyPlaying = sessionState.value.mediaPlaybackState.isPlaying || (now - lastMediaPlayingAt < 4500L)
+        val userPausedRecently = (now - lastExplicitUserPauseAt) < 2000L
+        return wasRecentlyPlaying && !userPausedRecently
+    }
+
     fun updateMediaPlaybackState(
         isActive: Boolean,
         isPlaying: Boolean,
@@ -1425,6 +1693,9 @@ class ZenBrowserViewModel(
         artwork: android.graphics.Bitmap? = null,
         artworkUrl: String = ""
     ) {
+        if (isPlaying) {
+            lastMediaPlayingAt = System.currentTimeMillis()
+        }
         sessionState.update { current ->
             val previous = current.mediaPlaybackState
             val effectiveTabId = tabId.ifBlank { previous.tabId }.ifBlank { current.activeTabId }
@@ -1573,24 +1844,34 @@ class ZenBrowserViewModel(
     fun startDownload(id: String) {
         viewModelScope.launch {
             val item = uiState.value.downloadItems.find { it.id == id } ?: return@launch
-            repository.insertDownloadItem(item.copy(status = "DOWNLOADING"))
+            com.example.gecko.ZenGeckoManager.resumeDownload(id, item.url)
+            repository.insertDownloadItem(item.copy(status = "downloading"))
         }
     }
 
     fun pauseDownload(id: String) {
+        com.example.gecko.ZenGeckoManager.pauseDownload(id)
         viewModelScope.launch {
             val item = uiState.value.downloadItems.find { it.id == id } ?: return@launch
-            repository.insertDownloadItem(item.copy(status = "PAUSED"))
+            repository.insertDownloadItem(item.copy(status = "paused", speedBytesPerSec = 0L, etaSeconds = 0L))
         }
     }
 
     fun resumeDownload(id: String) {
-        startDownload(id)
+        val item = uiState.value.downloadItems.find { it.id == id }
+        com.example.gecko.ZenGeckoManager.resumeDownload(id, item?.url)
+        viewModelScope.launch {
+            if (item != null) {
+                repository.insertDownloadItem(item.copy(status = "downloading"))
+            }
+        }
     }
 
     fun cancelDownload(id: String) {
+        com.example.gecko.ZenGeckoManager.cancelDownload(id)
         viewModelScope.launch {
             repository.deleteDownloadItem(id)
+            showBanner("Download cancelled")
         }
     }
 
@@ -1622,10 +1903,25 @@ class ZenBrowserViewModel(
     }
 
     fun setPictureInPictureMode(inPip: Boolean) {
-        // PiP has been completely removed per user request
+        suppressSidebarOpenUntil = maxOf(
+            suppressSidebarOpenUntil,
+            System.currentTimeMillis() + 2600L
+        )
+        com.example.gecko.ZenGeckoManager.isInPipMode = inPip
+        sessionState.update {
+            it.copy(
+                isInPictureInPictureMode = inPip,
+                isSidebarOpen = false,
+                isSidebarBoxMode = false,
+                requestSidebarSearchFocus = false
+            )
+        }
     }
 
     fun setAppLocked(locked: Boolean) {
+        if (!locked) {
+            lastBackgroundedAtMs = 0L
+        }
         sessionState.update { it.copy(isAppLocked = locked) }
     }
 
@@ -1634,6 +1930,10 @@ class ZenBrowserViewModel(
         if (!enabled) {
             setAppLocked(false)
         }
+    }
+
+    fun updateBiometricGracePeriod(period: BiometricGracePeriod) {
+        updateSidebarConfig { it.copy(biometricGracePeriod = period) }
     }
 
     fun updateDataSaverEnabled(enabled: Boolean) {
@@ -1774,6 +2074,28 @@ class ZenBrowserViewModel(
         return targetUrl
     }
 
+    fun navigateBackInTabHistory(tabId: String): Boolean {
+        val tab = uiState.value.allTabs.find { it.id == tabId } ?: return false
+        val currentUrl = tab.url
+        val prevUrl = popTabHistory(tabId, currentUrl) ?: return false
+        val updatedTitle = if (prevUrl == "zen://home") {
+            if (tab.isPrivate) "Private Tab" else "New Tab"
+        } else {
+            ZenPrivacyEngine.extractHostDisplay(prevUrl)
+        }
+        viewModelScope.launch {
+            repository.updateTab(
+                tab.copy(
+                    url = prevUrl,
+                    title = updatedTitle,
+                    isUnloaded = false,
+                    lastAccessed = System.currentTimeMillis()
+                )
+            )
+        }
+        return true
+    }
+
     fun updatePlayInWindowPipEnabled(enabled: Boolean) {
         updateSidebarConfig { it.copy(playInWindowPipEnabled = enabled) }
     }
@@ -1796,7 +2118,8 @@ class ZenBrowserViewModel(
             it.copy(
                 isCenterTopSearchPopupVisible = false,
                 requestSidebarSearchFocus = false,
-                isSidebarOpen = false
+                isSidebarOpen = false,
+                isSidebarBoxMode = false
             )
         }
 
@@ -2147,14 +2470,19 @@ class ZenBrowserViewModel(
     }
 
     fun toggleSidebarToolItem(item: SidebarToolItem) {
+        var wasRemoved = false
         updateSidebarConfig { cfg ->
             val current = cfg.enabledSidebarTools.toMutableList()
             if (current.contains(item)) {
                 current.remove(item)
+                wasRemoved = true
             } else {
                 current.add(item)
             }
             cfg.copy(enabledSidebarTools = current)
+        }
+        if (wasRemoved && item == SidebarToolItem.AI_SIDE_PANEL) {
+            sessionState.update { it.copy(isAiSidePanelOpen = false) }
         }
     }
 
@@ -2498,9 +2826,88 @@ class ZenBrowserViewModel(
         }
     }
 
+    private val inFlightExtensionInstalls = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    fun syncNativeExtensions(context: android.content.Context) {
+        com.example.gecko.ZenGeckoManager.init(context)
+        com.example.gecko.ZenGeckoManager.onSyncNativeExtension = { geckoId, extName, extSlug, extVer, enabled, allowPrivate ->
+            viewModelScope.launch {
+                val current = repository.firefoxExtensions.first()
+                val existing = current.find { ext ->
+                    ext.amoSlug.equals(extSlug, ignoreCase = true) ||
+                        ext.amoSlug.equals(geckoId, ignoreCase = true) ||
+                        ext.name.equals(extName, ignoreCase = true)
+                }
+                if (existing != null) {
+                    val resolvedKey = extSlug.ifBlank { geckoId }
+                    if (!existing.isInstalled) {
+                        repository.updateFirefoxExtension(
+                            existing.copy(
+                                isInstalled = true,
+                                isEnabled = enabled,
+                                allowInPrivate = allowPrivate,
+                                version = extVer.ifBlank { existing.version },
+                                amoSlug = extSlug.ifBlank { existing.amoSlug }
+                            )
+                        )
+                    } else {
+                        if (existing.isEnabled != enabled) {
+                            com.example.gecko.ZenGeckoManager.setNativeWebExtensionEnabled(resolvedKey, existing.isEnabled)
+                        }
+                        if (existing.allowInPrivate != allowPrivate) {
+                            com.example.gecko.ZenGeckoManager.setNativeWebExtensionAllowedInPrivate(resolvedKey, existing.allowInPrivate)
+                        }
+                    }
+                } else {
+                    val sanitizedId = geckoId.take(24).replace(Regex("[^a-zA-Z0-9_]"), "_")
+                    repository.insertFirefoxExtension(
+                        FirefoxExtensionEntity(
+                            id = "ff_gecko_$sanitizedId",
+                            name = extName,
+                            author = "Mozilla Add-ons",
+                            version = extVer.ifBlank { "1.0.0" },
+                            description = "Mobile Firefox Add-on installed in Zen",
+                            category = "Firefox Mobile Add-on",
+                            permissions = "Mozilla WebExtension permissions",
+                            isInstalled = true,
+                            isEnabled = enabled,
+                            allowInPrivate = allowPrivate,
+                            runAt = "document_idle",
+                            matchPatterns = "*://*/*",
+                            amoSlug = extSlug.ifBlank { geckoId },
+                            cssPayload = "",
+                            jsPayload = ""
+                        )
+                    )
+                }
+            }
+        }
+        viewModelScope.launch(Dispatchers.Main) {
+            runCatching { com.example.gecko.ZenGeckoManager.getOrCreateRuntime(context) }
+        }
+    }
+
+    private fun extensionNativeLookupKey(extension: FirefoxExtensionEntity): String =
+        extension.amoSlug.ifBlank { extension.name.ifBlank { extension.id } }
+
+    private fun deleteCachedXpiForSlug(slug: String) {
+        val ctx = com.example.gecko.ZenGeckoManager.getAppContext() ?: return
+        val safeName = slug.lowercase().replace(Regex("[^a-z0-9._-]"), "_")
+        if (safeName.isBlank()) return
+        runCatching {
+            val f = java.io.File(java.io.File(ctx.filesDir, "zen_extensions"), "$safeName.xpi")
+            if (f.exists()) f.delete()
+        }
+    }
+
     fun installOrUninstallFirefoxExtension(extension: FirefoxExtensionEntity) {
         viewModelScope.launch {
             val nextInstalled = !extension.isInstalled
+            val lookupKey = extensionNativeLookupKey(extension)
+            if (!nextInstalled) {
+                com.example.gecko.ZenGeckoManager.uninstallNativeWebExtension(lookupKey)
+                deleteCachedXpiForSlug(lookupKey)
+            }
             repository.updateFirefoxExtension(
                 extension.copy(
                     isInstalled = nextInstalled,
@@ -2518,6 +2925,10 @@ class ZenBrowserViewModel(
         if (!extension.isInstalled) return
         viewModelScope.launch {
             val nextEnabled = !extension.isEnabled
+            com.example.gecko.ZenGeckoManager.setNativeWebExtensionEnabled(
+                extensionNativeLookupKey(extension),
+                nextEnabled
+            )
             repository.updateFirefoxExtension(extension.copy(isEnabled = nextEnabled))
             showBanner(
                 if (nextEnabled) "Enabled '${extension.name}'"
@@ -2529,6 +2940,10 @@ class ZenBrowserViewModel(
     fun toggleFirefoxExtensionPrivateAllowed(extension: FirefoxExtensionEntity) {
         viewModelScope.launch {
             val nextPrivate = !extension.allowInPrivate
+            com.example.gecko.ZenGeckoManager.setNativeWebExtensionAllowedInPrivate(
+                extensionNativeLookupKey(extension),
+                nextPrivate
+            )
             repository.updateFirefoxExtension(extension.copy(allowInPrivate = nextPrivate))
             showBanner(
                 if (nextPrivate) "Allowed '${extension.name}' in Private Tabs"
@@ -2557,106 +2972,261 @@ class ZenBrowserViewModel(
         }
     }
 
-    fun installExtensionFromAmoPage(url: String, pageTitle: String?) {
-        val parsed = runCatching { java.net.URI(url) }.getOrNull()
-        if (parsed == null) {
-            showBanner("Extension installs require a valid HTTPS URL")
-            return
+    fun togglePinExtensionToToolbar(extensionId: String) {
+        updateSidebarConfig { cfg ->
+            val current = cfg.pinnedExtensionIds
+            val isNowPinned = !current.contains(extensionId)
+            val next = if (isNowPinned) current + extensionId else current - extensionId
+            showBanner(if (isNowPinned) "Pinned extension to toolbar" else "Unpinned extension from toolbar")
+            cfg.copy(pinnedExtensionIds = next)
         }
-        val scheme = parsed.scheme?.lowercase()
-        val host = parsed.host?.lowercase()
-        if (scheme != "https" || host.isNullOrBlank()) {
-            showBanner("Extension installs require a valid HTTPS URL")
-            return
-        }
+    }
 
-        val lower = url.lowercase()
-        if (lower.endsWith(".crx") || lower.contains(".crx?")) {
-            showBanner("Chrome .crx packages are not compatible with this browser engine. Import a Firefox .xpi or userscript instead.")
-            return
+    private fun extractAmoLocalizedField(raw: Any?): String {
+        return when (raw) {
+            is String -> raw.trim()
+            is org.json.JSONObject -> {
+                raw.optString("en-US").takeIf { it.isNotBlank() }
+                    ?: raw.optString("en").takeIf { it.isNotBlank() }
+                    ?: raw.keys().asSequence().firstOrNull()?.let { raw.optString(it) }?.trim().orEmpty()
+            }
+            else -> ""
         }
+    }
 
-        if (lower.endsWith(".user.js") || lower.contains(".user.js?")) {
-            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                try {
-                    val script = downloadExtensionText(url, 1_000_000)
-                    if (!script.contains("// ==UserScript==", ignoreCase = true)) {
-                        showBanner("This download is not a valid userscript")
-                        return@launch
-                    }
-                    installUserscript(script, fallbackUrl = url, fallbackName = pageTitle)
-                } catch (e: Exception) {
-                    showBanner("Could not download userscript: ${e.localizedMessage ?: "network error"}")
+    private suspend fun installGeckoExtensionSuspend(xpiUrl: String, slug: String): Boolean {
+        val result = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        com.example.gecko.ZenGeckoManager.installWebExtensionFromUri(xpiUrl, slug = slug) { ok, _, _ ->
+            if (!result.isCompleted) result.complete(ok)
+        }
+        return kotlinx.coroutines.withTimeoutOrNull(20_000L) { result.await() } ?: false
+    }
+
+    private suspend fun installGeckoExtensionFromFileSuspend(
+        context: android.content.Context,
+        file: java.io.File,
+        slug: String
+    ): Boolean {
+        val result = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        com.example.gecko.ZenGeckoManager.installWebExtensionFromFile(context, file, slug = slug) { ok, _, _ ->
+            if (!result.isCompleted) result.complete(ok)
+        }
+        return kotlinx.coroutines.withTimeoutOrNull(20_000L) { result.await() } ?: false
+    }
+
+    private fun selectMobileXpiUrlFromVersion(currentVersion: org.json.JSONObject?): String? {
+        if (currentVersion == null) return null
+        val singleFile = currentVersion.optJSONObject("file")
+        val singlePlatform = singleFile?.optString("platform").orEmpty().lowercase()
+        val singleUrl = singleFile?.optString("url").orEmpty()
+        if (singleUrl.startsWith("https://") && (singlePlatform == "android" || singlePlatform == "all" || singlePlatform.isBlank())) {
+            return singleUrl
+        }
+        val files = currentVersion.optJSONArray("files")
+        if (files != null && files.length() > 0) {
+            var androidUrl: String? = null
+            var allUrl: String? = null
+            var firstHttps: String? = null
+            for (i in 0 until files.length()) {
+                val f = files.optJSONObject(i) ?: continue
+                val url = f.optString("url").trim()
+                if (!url.startsWith("https://")) continue
+                if (firstHttps == null) firstHttps = url
+                when (f.optString("platform").trim().lowercase()) {
+                    "android" -> if (androidUrl == null) androidUrl = url
+                    "all" -> if (allUrl == null) allUrl = url
                 }
             }
-            return
+            return androidUrl ?: allUrl ?: firstHttps
         }
+        return singleUrl.takeIf { it.startsWith("https://") }
+    }
 
-        val isAmo = host == "addons.mozilla.org" || host.endsWith(".addons.mozilla.org")
-        val isDirectXpi = parsed.path?.lowercase()?.endsWith(".xpi") == true
-        if (!isAmo && !isDirectXpi) {
-            showBanner("Unsupported extension source. Use Mozilla Add-ons, a Firefox .xpi, or a .user.js script.")
-            return
-        }
-
-        // A direct .xpi URL is passed by the download interceptor. AMO pages are resolved
-        // through Mozilla's API so we download the actual package rather than saving a fake
-        // extension record that only logs to the console.
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val currentExtensions = uiState.value.firefoxExtensions
-                val slug = if (isAmo) {
-                    val segments = parsed.path.orEmpty().split('/').filter { it.isNotBlank() }
-                    val addonIndex = segments.indexOfFirst { it.equals("addon", ignoreCase = true) }
-                    if (addonIndex >= 0 && addonIndex + 1 < segments.size) segments[addonIndex + 1] else ""
-                } else {
-                    parsed.path.orEmpty().substringAfterLast('/').removeSuffix(".xpi")
-                }
-
-                val builtIn = currentExtensions.find { ext ->
-                    slug.isNotBlank() && ext.amoSlug.isNotBlank() &&
-                        ext.amoSlug.equals(slug, ignoreCase = true)
-                }
-                if (builtIn != null) {
-                    repository.updateFirefoxExtension(builtIn.copy(isInstalled = true, isEnabled = true))
-                    showBanner("Enabled built-in compatibility for '${builtIn.name}'")
-                    return@launch
-                }
-
-                val xpiUrl = if (isDirectXpi) {
-                    url
-                } else {
-                    if (slug.isBlank()) {
-                        showBanner("Open a specific Firefox add-on page before installing")
-                        return@launch
+    fun installExtensionFromAmoPage(url: String, pageTitle: String? = null) {
+        when (val target = com.example.extensions.ZenExtensionCompatibility.resolveInstallTarget(url)) {
+            is com.example.extensions.ExtensionInstallTarget.Unsupported -> {
+                showBanner(target.reason)
+                return
+            }
+            is com.example.extensions.ExtensionInstallTarget.UserscriptUrl -> {
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        val script = downloadExtensionText(target.url, 1_500_000)
+                        if (!script.contains("// ==UserScript==", ignoreCase = true)) {
+                            showBanner("This download is not a valid userscript")
+                            return@launch
+                        }
+                        installUserscript(script, fallbackUrl = target.url, fallbackName = pageTitle)
+                    } catch (e: Exception) {
+                        showBanner("Could not download userscript: ${e.localizedMessage ?: "network error"}")
                     }
-                    val apiUrl = "https://addons.mozilla.org/api/v5/addons/addon/" +
-                        java.net.URLEncoder.encode(slug, "UTF-8") + "/"
-                    val metadata = org.json.JSONObject(downloadExtensionText(apiUrl, 1_000_000))
-                    metadata.optJSONObject("current_version")
-                        ?.optJSONArray("files")
-                        ?.optJSONObject(0)
-                        ?.optString("url")
-                        ?.takeIf { it.startsWith("https://addons.mozilla.org/") }
-                        ?: throw IllegalArgumentException("Mozilla did not provide a downloadable XPI")
+                }
+                return
+            }
+            is com.example.extensions.ExtensionInstallTarget.DirectXpiUrl,
+            is com.example.extensions.ExtensionInstallTarget.AmoAddon -> {
+                val slug = when (target) {
+                    is com.example.extensions.ExtensionInstallTarget.AmoAddon -> target.slug
+                    is com.example.extensions.ExtensionInstallTarget.DirectXpiUrl -> target.slug
+                    else -> ""
+                }
+                val isAmo = target is com.example.extensions.ExtensionInstallTarget.AmoAddon
+                val dedupeKey = slug.ifBlank { url }.lowercase()
+                if (!inFlightExtensionInstalls.add(dedupeKey)) {
+                    return
                 }
 
-                val packageUri = java.net.URI(xpiUrl)
-                val packageHost = packageUri.host?.lowercase()
-                val packageIsAmo = packageHost == "addons.mozilla.org" ||
-                    packageHost?.endsWith(".addons.mozilla.org") == true
-                if (packageUri.scheme != "https" || packageHost.isNullOrBlank() ||
-                    (isAmo && !isDirectXpi && !packageIsAmo)
-                ) {
-                    throw IllegalArgumentException("The XPI download must use HTTPS and have a valid host")
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        showBanner("Installing '${slug.ifBlank { "extension" }}' from Firefox Add-ons...")
+                        var amoDisplayName = ""
+                        var amoSummary = ""
+                        var amoAuthor = ""
+                        var amoVersion = ""
+
+                        val xpiUrl = if (target is com.example.extensions.ExtensionInstallTarget.DirectXpiUrl) {
+                            target.url
+                        } else {
+                            val encodedSlug = java.net.URLEncoder.encode(slug, "UTF-8")
+                            val androidApiUrl = "https://addons.mozilla.org/api/v5/addons/addon/$encodedSlug/?app=android"
+                            val genericApiUrl = "https://addons.mozilla.org/api/v5/addons/addon/$encodedSlug/"
+                            val metadataJson = runCatching {
+                                org.json.JSONObject(downloadExtensionText(androidApiUrl, 1_500_000))
+                            }.getOrElse {
+                                org.json.JSONObject(downloadExtensionText(genericApiUrl, 1_500_000))
+                            }
+                            amoDisplayName = extractAmoLocalizedField(metadataJson.opt("name"))
+                            amoSummary = extractAmoLocalizedField(metadataJson.opt("summary"))
+                            amoAuthor = metadataJson.optJSONArray("authors")?.optJSONObject(0)?.optString("name").orEmpty()
+                            val currentVersion = metadataJson.optJSONObject("current_version")
+                            amoVersion = currentVersion?.optString("version").orEmpty()
+                            selectMobileXpiUrlFromVersion(currentVersion)
+                                ?: run {
+                                    val fallbackMetadata = org.json.JSONObject(downloadExtensionText(genericApiUrl, 1_500_000))
+                                    val fallbackVersion = fallbackMetadata.optJSONObject("current_version")
+                                    if (amoVersion.isBlank()) amoVersion = fallbackVersion?.optString("version").orEmpty()
+                                    selectMobileXpiUrlFromVersion(fallbackVersion)
+                                }
+                                ?: throw IllegalArgumentException("Mozilla did not provide a downloadable Mobile XPI")
+                        }
+
+                        val packageUri = java.net.URI(xpiUrl)
+                        val packageHost = packageUri.host?.lowercase()
+                        val packageIsMozilla = packageHost == "addons.mozilla.org" ||
+                            packageHost?.endsWith(".addons.mozilla.org") == true ||
+                            packageHost?.endsWith(".mozilla.org") == true ||
+                            packageHost?.endsWith(".mozilla.net") == true
+                        if (packageUri.scheme != "https" || packageHost.isNullOrBlank() || (isAmo && !packageIsMozilla)) {
+                            throw IllegalArgumentException("The XPI download must use HTTPS and have a valid Mozilla host")
+                        }
+
+                        val cleanSlug = slug.ifBlank { "firefox-addon" }
+                        var nativeInstalled = runCatching {
+                            installGeckoExtensionSuspend(xpiUrl, cleanSlug)
+                        }.getOrDefault(false)
+
+                        val bytes = runCatching {
+                            downloadExtensionBytes(xpiUrl, 30 * 1024 * 1024)
+                        }.getOrNull()
+
+                        if (!nativeInstalled && bytes != null) {
+                            val ctx = com.example.gecko.ZenGeckoManager.getAppContext()
+                            if (ctx != null) {
+                                val extDir = java.io.File(ctx.filesDir, "zen_extensions").apply { mkdirs() }
+                                val safeName = cleanSlug.lowercase().replace(Regex("[^a-z0-9._-]"), "_")
+                                val cachedFile = java.io.File(extDir, "$safeName.xpi")
+                                runCatching { cachedFile.writeBytes(bytes) }
+                                if (cachedFile.exists() && cachedFile.length() > 0L) {
+                                    nativeInstalled = runCatching {
+                                        installGeckoExtensionFromFileSuspend(ctx, cachedFile, cleanSlug)
+                                    }.getOrDefault(false)
+                                }
+                            }
+                        }
+
+                        val parsed = bytes?.let { raw ->
+                            runCatching {
+                                com.example.extensions.ZenExtensionCompatibility.extractPackageMetadataAndScripts(
+                                    fileName = "$cleanSlug.xpi",
+                                    rawBytes = raw,
+                                    allowNativeBackgroundOnly = true
+                                )
+                            }.getOrNull()
+                        }
+
+                        if (parsed == null && !nativeInstalled && amoDisplayName.isBlank()) {
+                            throw IllegalArgumentException("Failed to verify Firefox Add-on package")
+                        }
+
+                        val existing = uiState.value.firefoxExtensions.find { ext ->
+                            slug.isNotBlank() && (
+                                ext.amoSlug.equals(slug, ignoreCase = true) ||
+                                    (amoDisplayName.isNotBlank() && ext.name.equals(amoDisplayName, ignoreCase = true))
+                                )
+                        }
+                        val resolvedSlug = slug.ifBlank { parsed?.entity?.amoSlug ?: "firefox-addon" }
+                        val resolvedName = amoDisplayName
+                            .ifBlank { parsed?.entity?.name.orEmpty() }
+                            .ifBlank { pageTitle?.takeIf { it.isNotBlank() } ?: resolvedSlug.replace("-", " ").trim() }
+
+                        val baseEntity = parsed?.entity ?: FirefoxExtensionEntity(
+                            id = "ff_amo_${UUID.randomUUID().toString().take(8)}",
+                            name = resolvedName,
+                            author = amoAuthor.ifBlank { "Mozilla Add-ons" },
+                            version = amoVersion.ifBlank { "1.0.0" },
+                            description = amoSummary.ifBlank { "Firefox Mobile Add-on installed from addons.mozilla.org" },
+                            category = "Firefox Mobile Add-on",
+                            permissions = "Standard web permissions",
+                            isInstalled = true,
+                            isEnabled = true,
+                            allowInPrivate = false,
+                            runAt = "document_idle",
+                            matchPatterns = "*://*/*",
+                            amoSlug = resolvedSlug,
+                            cssPayload = "",
+                            jsPayload = ""
+                        )
+
+                        val finalEntity = baseEntity.copy(
+                            id = existing?.id ?: baseEntity.id,
+                            name = resolvedName,
+                            author = amoAuthor.ifBlank { baseEntity.author },
+                            version = amoVersion.ifBlank { baseEntity.version },
+                            description = amoSummary.ifBlank { baseEntity.description },
+                            amoSlug = resolvedSlug,
+                            allowInPrivate = existing?.allowInPrivate ?: baseEntity.allowInPrivate,
+                            isInstalled = true,
+                            isEnabled = true
+                        )
+                        if (existing != null) {
+                            repository.updateFirefoxExtension(finalEntity)
+                        } else {
+                            repository.insertFirefoxExtension(finalEntity)
+                        }
+                        if (nativeInstalled) {
+                            com.example.gecko.ZenGeckoManager.setNativeWebExtensionAllowedInPrivate(
+                                resolvedSlug,
+                                finalEntity.allowInPrivate
+                            )
+                        }
+                        showBanner(
+                            if (nativeInstalled) "Added '${finalEntity.name}' to Firefox Mobile Add-ons"
+                            else "Installed '${finalEntity.name}' from Firefox Add-ons"
+                        )
+                    } catch (e: Exception) {
+                        val fallbackExisting = uiState.value.firefoxExtensions.find { ext ->
+                            slug.isNotBlank() && ext.amoSlug.equals(slug, ignoreCase = true)
+                        }
+                        if (fallbackExisting != null) {
+                            repository.updateFirefoxExtension(fallbackExisting.copy(isInstalled = true, isEnabled = true))
+                            showBanner("Enabled '${fallbackExisting.name}'")
+                        } else {
+                            showBanner("Could not install add-on: ${e.localizedMessage ?: "unsupported package"}")
+                        }
+                    } finally {
+                        inFlightExtensionInstalls.remove(dedupeKey)
+                    }
                 }
-                val bytes = downloadExtensionBytes(xpiUrl, 20 * 1024 * 1024)
-                importFirefoxXpiPackage(
-                    fileName = slug.ifBlank { "firefox-addon" } + ".xpi",
-                    inputStream = java.io.ByteArrayInputStream(bytes)
-                )
-            } catch (e: Exception) {
-                showBanner("Could not install desktop extension: ${e.localizedMessage ?: "unsupported package"}")
             }
         }
     }
@@ -2808,154 +3378,39 @@ class ZenBrowserViewModel(
     fun importFirefoxXpiPackage(fileName: String, inputStream: java.io.InputStream) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val entryMap = mutableMapOf<String, String>()
-                var entryCount = 0
-                var selectedBytes = 0L
-                var totalArchiveBytes = 0L
-                java.util.zip.ZipInputStream(inputStream).use { zis ->
-                    var entry = zis.nextEntry
-                    while (entry != null) {
-                        entryCount++
-                        if (entryCount > 1_000) throw IllegalArgumentException("Archive contains too many files")
-                        val normalizedName = entry.name.replace('\\', '/')
-                            .removePrefix("./")
-                            .trimStart('/')
-                        val safePath = normalizedName.split('/').none { it == ".." }
-                        val lowerName = normalizedName.lowercase()
-                        val shouldRead = !entry.isDirectory && safePath &&
-                            (lowerName == "manifest.json" ||
-                                lowerName.endsWith(".js") || lowerName.endsWith(".css"))
-                        val buffer = ByteArray(8192)
-                        if (shouldRead && (entryMap.size < 120 || lowerName == "manifest.json")) {
-                            val output = java.io.ByteArrayOutputStream()
-                            var fileBytes = 0
-                            while (true) {
-                                val count = zis.read(buffer)
-                                if (count < 0) break
-                                fileBytes += count
-                                selectedBytes += count
-                                totalArchiveBytes += count
-                                if (fileBytes > 512 * 1024 || selectedBytes > 8L * 1024 * 1024 ||
-                                    totalArchiveBytes > 40L * 1024 * 1024
-                                ) {
-                                    throw IllegalArgumentException("Extension archive exceeds the import size limit")
-                                }
-                                output.write(buffer, 0, count)
-                            }
-                            entryMap[lowerName] = output.toByteArray().toString(Charsets.UTF_8)
-                        } else {
-                            // Count skipped entries too: ZipInputStream.closeEntry() would otherwise
-                            // decompress an unbounded payload from an archive with huge ignored files.
-                            while (true) {
-                                val count = zis.read(buffer)
-                                if (count < 0) break
-                                totalArchiveBytes += count
-                                if (totalArchiveBytes > 40L * 1024 * 1024) {
-                                    throw IllegalArgumentException("Extension archive exceeds the import size limit")
-                                }
-                            }
-                        }
-                        zis.closeEntry()
-                        entry = zis.nextEntry
-                    }
+                val rawBytes = inputStream.readBytes()
+                if (fileName.lowercase().endsWith(".user.js")) {
+                    installUserscript(rawBytes.toString(Charsets.UTF_8), fallbackName = fileName)
+                    return@launch
                 }
-
-                val manifestRaw = entryMap["manifest.json"]
-                    ?: throw IllegalArgumentException("The XPI has no root manifest.json")
-                val json = org.json.JSONObject(manifestRaw)
-                val rawName = json.optString("name", "")
-                val extName = rawName.takeIf { it.isNotBlank() && !it.startsWith("__MSG_") }
-                    ?: fileName.substringBeforeLast(".").replace("-", " ").replace("_", " ").trim()
-                        .ifEmpty { "Firefox XPI Add-on" }
-                val extVersion = json.optString("version", "1.0.0").ifBlank { "1.0.0" }
-                val rawDescription = json.optString("description", "")
-                val extAuthor = json.optString("author", "Firefox XPI Package")
-                val permissions = json.optJSONArray("permissions")
-                val extPermissions = if (permissions != null) {
-                    (0 until permissions.length()).map { permissions.optString(it) }
-                        .filter { it.isNotBlank() }.distinct().joinToString(", ")
-                } else {
-                    "No declared permissions"
-                }
-
-                val contentScripts = json.optJSONArray("content_scripts")
-                    ?: throw IllegalArgumentException(
-                        "This desktop add-on has no content_scripts. Background scripts, popups, and browser APIs cannot run in Android WebView."
-                    )
-                if (contentScripts.length() == 0) {
-                    throw IllegalArgumentException("This add-on does not define supported content scripts")
-                }
-
-                val matchesSet = linkedSetOf<String>()
-                val collectedCss = StringBuilder()
-                val collectedJs = StringBuilder()
-                var extRunAt = "document_idle"
-                for (i in 0 until contentScripts.length()) {
-                    val cs = contentScripts.optJSONObject(i) ?: continue
-                    when (cs.optString("run_at", "document_idle")) {
-                        "document_start" -> extRunAt = "document_start"
-                        "document_end" -> if (extRunAt != "document_start") extRunAt = "document_end"
-                        else -> if (extRunAt != "document_start" && extRunAt != "document_end") extRunAt = "document_idle"
-                    }
-                    val matches = cs.optJSONArray("matches")
-                    if (matches != null) {
-                        for (m in 0 until matches.length()) {
-                            val pattern = matches.optString(m).trim()
-                            if (pattern.isNotBlank()) matchesSet.add(pattern)
-                        }
-                    }
-                    val css = cs.optJSONArray("css")
-                    if (css != null) {
-                        for (c in 0 until css.length()) {
-                            val pathKey = css.optString(c).replace('\\', '/').removePrefix("./").trimStart('/').lowercase()
-                            entryMap[pathKey]?.let { collectedCss.append(it).append('\n') }
-                        }
-                    }
-                    val js = cs.optJSONArray("js")
-                    if (js != null) {
-                        for (j in 0 until js.length()) {
-                            val pathKey = js.optString(j).replace('\\', '/').removePrefix("./").trimStart('/').lowercase()
-                            entryMap[pathKey]?.let { collectedJs.append(it).append('\n') }
-                        }
-                    }
-                }
-
-                if (matchesSet.isEmpty()) {
-                    throw IllegalArgumentException("The add-on has no supported URL match patterns")
-                }
-                if (collectedCss.isBlank() && collectedJs.isBlank()) {
-                    throw IllegalArgumentException("No supported content script files were found in the XPI")
-                }
-
-                val unsupported = mutableListOf<String>()
-                if (json.has("background")) unsupported.add("background/service worker")
-                if (json.has("action") || json.has("browser_action") || json.has("page_action")) unsupported.add("toolbar popup/action")
-                if (json.has("options_ui") || json.has("options_page")) unsupported.add("extension settings page")
-                val compatibilityNote = "Imported in compatibility mode: content scripts and CSS only. " +
-                    (if (unsupported.isEmpty()) "Browser-extension APIs are not emulated." else
-                        "Unsupported features: ${unsupported.distinct().joinToString()}.")
-                val ext = FirefoxExtensionEntity(
-                    id = "ff_xpi_${java.util.UUID.randomUUID().toString().take(8)}",
-                    name = extName,
-                    author = extAuthor,
-                    version = extVersion,
-                    description = listOf(rawDescription.takeIf { it.isNotBlank() && !it.startsWith("__MSG_") }, compatibilityNote)
-                        .filterNotNull().joinToString("\n\n"),
-                    category = "XPI compatibility import",
-                    permissions = extPermissions,
-                    isInstalled = true,
-                    isEnabled = true,
-                    allowInPrivate = false,
-                    runAt = extRunAt,
-                    matchPatterns = matchesSet.joinToString(", "),
-                    amoSlug = fileName.substringBeforeLast("."),
-                    cssPayload = collectedCss.toString().trim(),
-                    jsPayload = collectedJs.toString().trim()
+                val parsed = com.example.extensions.ZenExtensionCompatibility.extractPackageMetadataAndScripts(
+                    fileName = fileName,
+                    rawBytes = rawBytes,
+                    allowNativeBackgroundOnly = true
                 )
-                repository.insertFirefoxExtension(ext)
-                showBanner("Imported '$extName' in content-script compatibility mode")
+                var nativeInstalled = false
+                val ctx = com.example.gecko.ZenGeckoManager.getAppContext()
+                if (ctx != null) {
+                    val extDir = java.io.File(ctx.filesDir, "zen_extensions").apply { mkdirs() }
+                    val safeSlug = parsed.entity.amoSlug.ifBlank { parsed.entity.name }
+                        .lowercase()
+                        .replace(Regex("[^a-z0-9._-]"), "_")
+                        .ifBlank { "imported_addon" }
+                    val destFile = java.io.File(extDir, "$safeSlug.xpi")
+                    runCatching { destFile.writeBytes(rawBytes) }
+                    if (destFile.exists() && destFile.length() > 0L) {
+                        nativeInstalled = runCatching {
+                            installGeckoExtensionFromFileSuspend(ctx, destFile, parsed.entity.amoSlug)
+                        }.getOrDefault(false)
+                    }
+                }
+                repository.insertFirefoxExtension(parsed.entity)
+                showBanner(
+                    if (nativeInstalled) "Added '${parsed.entity.name}' to Firefox Mobile Add-ons"
+                    else "Installed extension '${parsed.entity.name}'"
+                )
             } catch (e: Exception) {
-                showBanner("Could not import desktop extension: ${e.localizedMessage ?: "invalid or unsupported XPI"}")
+                showBanner("Could not import extension: ${e.localizedMessage ?: "invalid or unsupported package"}")
             } finally {
                 runCatching { inputStream.close() }
             }

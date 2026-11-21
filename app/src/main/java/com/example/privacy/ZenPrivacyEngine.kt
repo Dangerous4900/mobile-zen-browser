@@ -405,17 +405,33 @@ object ZenPrivacyEngine {
      */
     fun isAdOrPopupRedirect(url: String, userInitiated: Boolean = false): Boolean {
         if (url.isBlank() || url == "about:blank" || url.startsWith("zen://")) return false
-        if (ZenAdBlockList.isBlockedHost(try { Uri.parse(url).host } catch (_: Exception) { null })) return true
-        if (userInitiated) return isAdOrTrackerUrl(url)
+        val uri = try { Uri.parse(url) } catch (_: Exception) { null }
+        val host = uri?.host?.lowercase() ?: ""
+        if (ZenAdBlockList.isBlockedHost(host)) return true
+        if (isAdOrTrackerUrl(url)) return true
+        if (userInitiated) return false
         val lower = url.lowercase()
         val popupKeywords = listOf(
-            "popads", "popcash", "propellerads", "onclickads", "exoclick", "juicyads",
-            "adsterra", "trafficjunky", "ad-click", "clickad", "adclick", "redirect-ad",
-            "adserver", "popunder", "adgate", "monetag", "hilltopads", "a-ads", "a360",
-            "bet365", "1xbet", "stake.com", "casino", "spin2win", "sweepstakes", "betting",
-            "onclickads", "popunder", "adsterra", "ad-maven"
+            "popads", "popcash", "propellerads", "propellerclick", "onclickads", "exoclick",
+            "exosrv", "realsrv", "juicyads", "trafficjunky", "adsterra", "highperformanceformat",
+            "ad-click", "clickad", "adclick", "redirect-ad", "adserver", "popunder", "adgate",
+            "monetag", "hilltopads", "a-ads", "a360", "bet365", "1xbet", "stake.com", "casino",
+            "spin2win", "sweepstakes", "betting", "ad-maven", "clck.ru", "adpushup", "adextent",
+            "adcash", "admob", "leadbolt", "adblade", "bidvertiser", "revcontent", "mgid",
+            "zergnet", "content.ad", "smartfeed", "taboola", "outbrain", "aniview", "connatix"
         )
-        return popupKeywords.any { lower.contains(it) } || isAdOrTrackerUrl(url)
+        return popupKeywords.any { lower.contains(it) } || isLikelyPopupRedirectQuery(lower)
+    }
+
+    fun isLikelyPopupRedirectQuery(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("zoneid=") ||
+            lower.contains("bannerid=") ||
+            lower.contains("clickid=") ||
+            lower.contains("click_id=") ||
+            lower.contains("popunder=") ||
+            lower.contains("aff_id=") ||
+            (lower.contains("subid=") && lower.contains("redirect"))
     }
 
     fun buildDesktopModeSpoofScript(isDesktop: Boolean): String {
@@ -519,17 +535,9 @@ object ZenPrivacyEngine {
             """
             if (!window.__zenPopupInterceptorReady) {
                 window.__zenPopupInterceptorReady = true;
-                var rawOpen = window.open;
+                var dummyWin = { focus: function(){}, blur: function(){}, close: function(){}, postMessage: function(){}, closed: true };
                 window.open = function(url, target, features) {
-                    if (!url || url === 'about:blank' || url.length < 5) {
-                        return null;
-                    }
-                    var lower = (url || '').toLowerCase();
-                    var isPopAd = ['pop', 'ad', 'bet', 'casino', 'spin', 'click', 'redirect', 'track', 'outbrain', 'taboola', 'mgid', 'exoclick', 'juicy', 'propeller', 'traffic', 'onclick', 'monetag', 'adsterra', 'adgate'].some(function(k) { return lower.indexOf(k) !== -1; });
-                    if (isPopAd) {
-                        return null;
-                    }
-                    try { return rawOpen.apply(this, arguments); } catch(e) { return null; }
+                    return dummyWin;
                 };
                 window.showModalDialog = function() { return null; };
                 document.addEventListener('click', function(e) {
@@ -538,13 +546,11 @@ object ZenPrivacyEngine {
                         if (el.tagName === 'A') {
                             var targetAttr = el.getAttribute('target');
                             var hrefAttr = (el.getAttribute('href') || '').toLowerCase();
-                            if (targetAttr === '_blank') {
-                                var isPop = ['popads', 'popcash', 'exoclick', 'propellerads', 'onclickads', 'adsterra', 'juicyads', 'monetag', 'bet365', 'casino', 'redirect'].some(function(k) { return hrefAttr.indexOf(k) !== -1; });
-                                if (isPop) {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    return false;
-                                }
+                            var isPop = ['pop', 'ad', 'bet', 'casino', 'spin', 'click', 'redirect', 'outbrain', 'taboola', 'mgid', 'exoclick', 'juicy', 'propeller', 'traffic', 'onclick', 'monetag', 'adsterra', 'adgate'].some(function(k) { return hrefAttr.indexOf(k) !== -1; });
+                            if (targetAttr === '_blank' && isPop) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                return false;
                             }
                         }
                         el = el.parentElement;
@@ -824,12 +830,12 @@ object ZenPrivacyEngine {
                 var listeners = [];
                 var browserPolyfill = {
                     runtime: {
-                        id: 'zen-desktop-webextensions-runtime',
+                        id: 'zen-mobile-webextensions-runtime',
                         getURL: function(path) { return 'zen-extension://' + (path || ''); },
                         getManifest: function() {
                             return {
                                 manifest_version: 3,
-                                name: 'Zen Browser Desktop WebExtensions Engine',
+                                name: 'Zen Mobile Firefox Add-ons Engine',
                                 version: '2.0.0',
                                 permissions: ['storage', 'tabs', 'activeTab', 'webRequest', 'webNavigation', 'cookies']
                             };
@@ -923,11 +929,11 @@ object ZenPrivacyEngine {
                 if (!window.browser) window.browser = browserPolyfill;
                 if (!window.chrome) window.chrome = browserPolyfill;
                 
-                // Desktop Userscripts Engine: Greasemonkey / Tampermonkey / Violentmonkey APIs
+                // Mobile Userscripts Engine: Greasemonkey / Tampermonkey / Violentmonkey APIs
                 window.unsafeWindow = window;
                 window.GM_info = {
-                    script: { name: 'Zen Desktop Userscript', version: '1.0' },
-                    scriptHandler: 'Zen Desktop WebExtensions Engine',
+                    script: { name: 'Zen Userscript', version: '1.0' },
+                    scriptHandler: 'Zen Mobile Firefox Add-ons Engine',
                     version: '2.0.0'
                 };
                 window.GM_addStyle = function(css) {
@@ -955,23 +961,23 @@ object ZenPrivacyEngine {
                     return list;
                 };
                 
-                // Mozilla Add-ons (addons.mozilla.org) Desktop Extension integration
+                // Mozilla Add-ons (addons.mozilla.org) Mobile Firefox Extension integration
                 if (window.location.hostname === 'addons.mozilla.org') {
-                    function patchAmoDesktopUI() {
+                    function patchAmoMobileUI() {
                         var notices = document.querySelectorAll('.Notice-warning, .Notice--warning, .InstallButtonWrapper-notice');
                         notices.forEach(function(n) {
                             if (n.textContent && (n.textContent.includes('Firefox') || n.textContent.includes('Android'))) {
-                                n.innerHTML = '<span style="color:#10B981;font-weight:600;">✓ Zen Desktop Extensions Engine: Compatible</span>';
+                                n.innerHTML = '<span style="color:#10B981;font-weight:600;">✓ Zen Mobile Firefox Add-ons: Compatible</span>';
                             }
                         });
-                        var btn = document.querySelector('.AMOPrompt .Button, .InstallButtonWrapper .Button, a.InstallButton');
+                        var btn = document.querySelector('.AMOPrompt .Button, .InstallButtonWrapper .Button, a.InstallButton, .AMInstallButton-button');
                         if (btn) {
                             btn.removeAttribute('disabled');
-                            btn.classList.remove('Button--disabled');
+                            btn.classList.remove('Button--disabled', 'disabled');
                         }
                     }
-                    patchAmoDesktopUI();
-                    setInterval(patchAmoDesktopUI, 1200);
+                    patchAmoMobileUI();
+                    setInterval(patchAmoMobileUI, 1200);
                 }
             } catch(e) {}
         })();

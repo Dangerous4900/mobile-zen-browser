@@ -4,6 +4,8 @@ import com.example.data.TabEntity
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -63,6 +65,8 @@ import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Splitscreen
 import androidx.compose.material.icons.filled.SwapVert
@@ -139,7 +143,6 @@ import com.example.ui.components.ZenMediaCaptureSheet
 import com.example.ui.components.ZenAdvanceDownloadManagerSheet
 import com.example.ui.components.ZenModsStoreSheet
 import com.example.ui.components.ZenSidebarPanel
-import com.example.ui.components.ZenTutorialDialog
 import com.example.ui.components.ZenWebPaneView
 import com.example.ui.components.ZenWebViewController
 import com.example.ui.components.ZenBiometricLockScreen
@@ -280,6 +283,64 @@ private fun captureViaViewDraw(
     }
 }
 
+internal const val BACK_EDGE_NONE = -1
+
+internal enum class NavigationBackAction {
+    OPEN_SIDEBAR,
+    GO_BACK_PAGE,
+    NO_OP_AT_FIRST_PAGE
+}
+
+internal fun resolveNavigationBackAction(
+    swipeEdge: Int,
+    touchX: Float?,
+    viewportWidthPx: Int,
+    recentCancelledEdge: Int = BACK_EDGE_NONE,
+    backSwipeMode: BackSwipeSidebarMode,
+    horizontalSwipeMode: HorizontalSwipeNavigationMode,
+    canGoBackInPage: Boolean
+): NavigationBackAction {
+    val effectiveEdge = when {
+        swipeEdge == BackEventCompat.EDGE_LEFT || swipeEdge == BackEventCompat.EDGE_RIGHT -> swipeEdge
+        touchX != null && viewportWidthPx > 0 && touchX <= viewportWidthPx * 0.25f -> BackEventCompat.EDGE_LEFT
+        touchX != null && viewportWidthPx > 0 && touchX >= viewportWidthPx * 0.75f -> BackEventCompat.EDGE_RIGHT
+        else -> recentCancelledEdge
+    }
+
+    return when (backSwipeMode) {
+        BackSwipeSidebarMode.SINGLE_SWIPE_SIDEBAR -> NavigationBackAction.OPEN_SIDEBAR
+        BackSwipeSidebarMode.GO_BACK_THEN_SIDEBAR -> {
+            if (canGoBackInPage) NavigationBackAction.GO_BACK_PAGE
+            else NavigationBackAction.OPEN_SIDEBAR
+        }
+        BackSwipeSidebarMode.LEFT_SIDEBAR_RIGHT_BACK -> {
+            val openPanelEdge = if (horizontalSwipeMode == HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
+                BackEventCompat.EDGE_RIGHT
+            } else {
+                BackEventCompat.EDGE_LEFT
+            }
+            val goBackEdge = if (openPanelEdge == BackEventCompat.EDGE_LEFT) {
+                BackEventCompat.EDGE_RIGHT
+            } else {
+                BackEventCompat.EDGE_LEFT
+            }
+            when (effectiveEdge) {
+                openPanelEdge -> NavigationBackAction.OPEN_SIDEBAR
+                goBackEdge -> if (canGoBackInPage) {
+                    NavigationBackAction.GO_BACK_PAGE
+                } else {
+                    NavigationBackAction.NO_OP_AT_FIRST_PAGE
+                }
+                else -> if (canGoBackInPage) {
+                    NavigationBackAction.GO_BACK_PAGE
+                } else {
+                    NavigationBackAction.OPEN_SIDEBAR
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun ZenBrowserScreen(
     uiState: ZenBrowserUiState,
@@ -298,6 +359,10 @@ fun ZenBrowserScreen(
 
     val onToggleMediaPlayPause: () -> Unit = {
         val shouldPlay = !uiState.mediaPlaybackState.isPlaying
+        if (!shouldPlay) {
+            com.example.gecko.ZenGeckoManager.noteUserPauseIntent()
+            viewModel.noteUserMediaPause()
+        }
         val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
         if (tabId.isNotBlank()) {
             com.example.gecko.ZenGeckoManager.setMediaPlaying(tabId, shouldPlay)
@@ -334,10 +399,29 @@ fun ZenBrowserScreen(
     var showTabOverview by remember { mutableStateOf(false) }
     var contextInfo by remember { mutableStateOf<com.example.gecko.ZenContextInfo?>(null) }
     val overlayContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(uiState.isSidebarOpen) {
+        if (uiState.isSidebarOpen) {
+            contextInfo = null
+            com.example.gecko.ZenGeckoManager.onSidebarStateChanged(true)
+        } else {
+            com.example.gecko.ZenGeckoManager.onSidebarStateChanged(false)
+        }
+    }
+
     DisposableEffect(Unit) {
+        viewModel.syncNativeExtensions(overlayContext)
+        com.example.gecko.ZenGeckoManager.onOpenNewTabRequested = { url ->
+            viewModel.createNewTab(url, switchToTab = true)
+        }
         com.example.gecko.ZenGeckoManager.downloadEvents = { viewModel.onDownloadEvent(it) }
-        com.example.gecko.ZenGeckoManager.contextMenuSink = { info -> contextInfo = info }
+        com.example.gecko.ZenGeckoManager.contextMenuSink = { info ->
+            if (!uiState.isSidebarOpen && !viewModel.isSidebarOpenNow() && !uiState.isInPictureInPictureMode) {
+                contextInfo = info
+            }
+        }
         onDispose {
+            com.example.gecko.ZenGeckoManager.onOpenNewTabRequested = null
+            com.example.gecko.ZenGeckoManager.onSyncNativeExtension = null
             com.example.gecko.ZenGeckoManager.downloadEvents = null
             com.example.gecko.ZenGeckoManager.contextMenuSink = null
         }
@@ -351,28 +435,32 @@ fun ZenBrowserScreen(
             onDismiss = { showTabOverview = false }
         )
     }
-    contextInfo?.let { info ->
-        com.example.ui.components.ZenContextMenu(
-            info = info,
-            onOpenInNewTab = { viewModel.openLinkInNewTab(it, forceSwitch = false) },
-            onDownload = { com.example.gecko.ZenGeckoManager.downloadUrl(it) },
-            onShare = { url ->
-                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(android.content.Intent.EXTRA_TEXT, url)
-                }
-                runCatching { overlayContext.startActivity(android.content.Intent.createChooser(send, "Share").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            },
-            onCopy = { url ->
-                val cm = overlayContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                cm.setPrimaryClip(android.content.ClipData.newPlainText("link", url))
-                viewModel.showBanner("Link copied")
-            },
-            onDismiss = { contextInfo = null }
-        )
+    if (!uiState.isSidebarOpen && !uiState.isInPictureInPictureMode) {
+        contextInfo?.let { info ->
+            com.example.ui.components.ZenContextMenu(
+                info = info,
+                onOpenInNewTab = { viewModel.openLinkInNewTab(it, forceSwitch = false) },
+                onDownload = { com.example.gecko.ZenGeckoManager.downloadUrl(it) },
+                onShare = { url ->
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, url)
+                    }
+                    runCatching { overlayContext.startActivity(android.content.Intent.createChooser(send, "Share").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                },
+                onCopy = { url ->
+                    val cm = overlayContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("link", url))
+                    viewModel.showBanner("Link copied")
+                },
+                onDismiss = { contextInfo = null }
+            )
+        }
     }
 
     val onDismissMediaBar: () -> Unit = {
+        com.example.gecko.ZenGeckoManager.noteUserPauseIntent()
+        viewModel.noteUserMediaPause()
         val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
         if (tabId.isNotBlank()) {
             com.example.gecko.ZenGeckoManager.setMediaPlaying(tabId, false)
@@ -397,10 +485,22 @@ fun ZenBrowserScreen(
         }
     }
 
+    val onSeekMediaBy: (Long) -> Unit = { deltaMs ->
+        val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
+        if (tabId.isNotBlank()) {
+            com.example.gecko.ZenGeckoManager.seekMediaBy(tabId, deltaMs)
+        }
+        withMediaController { it.seekMediaBy(deltaMs) }
+    }
+
     // System media controls use explicit state commands so Android's Play and Pause
     // buttons cannot accidentally invert each other. Pages without media are left untouched.
-    DisposableEffect(primaryWebController, secondaryWebController, uiState.mediaPlaybackState.isPlaying, uiState.mediaPlaybackState.tabId) {
+    DisposableEffect(primaryWebController, secondaryWebController, uiState.mediaPlaybackState.isPlaying, uiState.mediaPlaybackState.isMuted, uiState.mediaPlaybackState.tabId) {
         com.example.ZenMediaBus.onSetPlaying = { playing ->
+            if (!playing) {
+                com.example.gecko.ZenGeckoManager.noteUserPauseIntent()
+                viewModel.noteUserMediaPause()
+            }
             val media = uiState.mediaPlaybackState
             val tabId = media.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
             if (tabId.isNotBlank()) {
@@ -424,6 +524,7 @@ fun ZenBrowserScreen(
             )
         }
         com.example.ZenMediaBus.onPlayPause = onToggleMediaPlayPause
+        com.example.ZenMediaBus.onToggleMute = onToggleMediaMute
         com.example.ZenMediaBus.onStop = onDismissMediaBar
         com.example.ZenMediaBus.onSeekTo = { ms ->
             val tabId = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
@@ -452,6 +553,7 @@ fun ZenBrowserScreen(
             com.example.ZenMediaBus.onRequestProgress = null
             com.example.ZenMediaBus.onSetPlaying = null
             com.example.ZenMediaBus.onPlayPause = null
+            com.example.ZenMediaBus.onToggleMute = null
             com.example.ZenMediaBus.onStop = null
         }
     }
@@ -459,8 +561,19 @@ fun ZenBrowserScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                viewModel.onAppBackgroundedOrClosed()
+            val activityInPip = (overlayContext as? com.example.MainActivity)?.isInPictureInPictureMode == true
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    if (!uiState.isInPictureInPictureMode && !activityInPip) {
+                        viewModel.onAppBackgroundedOrClosed()
+                    }
+                }
+                Lifecycle.Event.ON_START -> {
+                    viewModel.evaluateBiometricLockOnForeground(
+                        uiState.isInPictureInPictureMode || activityInPip
+                    )
+                }
+                else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -470,6 +583,8 @@ fun ZenBrowserScreen(
     }
 
     val dataSaverOn = uiState.sidebarConfig.dataSaverEnabled
+    val adBlockerEnabled = uiState.privacyConfig.blockTrackersAndAds &&
+        uiState.privacyConfig.adBlockerLevel != com.example.data.AdBlockerLevel.OFF
     val appContext = LocalContext.current.applicationContext
     LaunchedEffect(dataSaverOn) {
         com.example.gecko.ZenGeckoManager.setDataSaver(appContext, dataSaverOn)
@@ -477,26 +592,40 @@ fun ZenBrowserScreen(
             wv.settings.blockNetworkImage = dataSaverOn
         }
     }
+    LaunchedEffect(adBlockerEnabled) {
+        com.example.gecko.ZenGeckoManager.setAdBlockEnabled(appContext, adBlockerEnabled)
+    }
 
+    var wasInPipTransition by remember { mutableStateOf(false) }
     LaunchedEffect(uiState.isInPictureInPictureMode) {
-        val wasPlayingAtSwap = uiState.mediaPlaybackState.isPlaying
-        if (uiState.isInPictureInPictureMode) {
-            viewModel.setSidebarOpen(false)
+        val enteringPip = uiState.isInPictureInPictureMode
+        val exitingPip = !enteringPip && wasInPipTransition
+        if (enteringPip) {
+            wasInPipTransition = true
+        } else if (exitingPip) {
+            wasInPipTransition = false
         }
+        if (enteringPip || exitingPip) {
+            viewModel.suppressSidebarDuringTransition(2600L)
+        }
+        val shouldResumeMedia = (enteringPip || exitingPip) && viewModel.shouldAutoResumeMediaOnPip()
+        com.example.gecko.ZenGeckoManager.onPipModeChanged(enteringPip)
         // Make the playing video fill the small PiP window; restore the page on exit.
         val mediaTabId = uiState.mediaPlaybackState.tabId
         val wv = if (mediaTabId.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(mediaTabId) else null
         if (wv != null) {
-            ZenWebViewController().apply { webView = wv }.setPipVideoMode(uiState.isInPictureInPictureMode)
+            ZenWebViewController().apply { webView = wv }.setPipVideoMode(enteringPip)
         }
-        primaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
-        secondaryWebController.setPipVideoMode(uiState.isInPictureInPictureMode)
+        primaryWebController.setPipVideoMode(enteringPip)
+        secondaryWebController.setPipVideoMode(enteringPip)
 
-        if (wasPlayingAtSwap) {
-            repeat(3) {
-                delay(350)
+        if (shouldResumeMedia) {
+            repeat(4) {
+                delay(220)
+                if (!viewModel.shouldAutoResumeMediaOnPip()) return@LaunchedEffect
                 val id = uiState.mediaPlaybackState.tabId.ifBlank { uiState.focusedTab?.id.orEmpty() }
                 if (id.isNotBlank()) {
+                    com.example.gecko.ZenGeckoManager.keepBackgroundSessionsActive()
                     com.example.gecko.ZenGeckoManager.setMediaPlaying(id, true)
                 }
                 val target = if (id.isNotBlank()) com.example.ui.components.ZenWebViewManager.get(id) else null
@@ -526,45 +655,123 @@ fun ZenBrowserScreen(
         }
     }
 
+    // Storage Permissions Launcher for Downloads
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ -> }
+
+    LaunchedEffect(activeAdmRequest) {
+        if (activeAdmRequest != null) {
+            runCatching {
+                storagePermissionLauncher.launch(
+                    arrayOf(
+                        android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                        android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                        android.Manifest.permission.POST_NOTIFICATIONS
+                    )
+                )
+            }
+        }
+    }
+
+    val currentUiState by androidx.compose.runtime.rememberUpdatedState(uiState)
+    val currentActiveController by androidx.compose.runtime.rememberUpdatedState(activeController)
+    val hostView = androidx.compose.ui.platform.LocalView.current
+    val mainActivity = LocalContext.current as? com.example.MainActivity
+
+    val performGoBack: () -> Boolean = {
+        val state = currentUiState
+        val controller = currentActiveController
+        val tab = state.focusedTab
+        when {
+            controller.geckoSession != null && controller.canGoBackGecko -> {
+                controller.goBack()
+                true
+            }
+            controller.geckoSession == null && controller.canGoBack() -> {
+                controller.goBack()
+                true
+            }
+            tab != null && viewModel.canTabHistoryGoBack(tab.id) -> {
+                viewModel.navigateBackInTabHistory(tab.id)
+            }
+            else -> false
+        }
+    }
+
     // Predictive Back Handler:
-    // Navigates back in web page history when history is available, or handles modals/sidebar.
-    PredictiveBackHandler(enabled = true) { progress ->
-        var swipeEdge = BackEventCompat.EDGE_LEFT
+    // Detects which edge triggered the system navigation back swipe (left edge -> swipe right,
+    // right edge -> swipe left) to open the side panel or navigate back a page respectively.
+    // Disabled during Picture-in-Picture so PiP gestures/transitions never open the sidebar.
+    PredictiveBackHandler(enabled = !uiState.isInPictureInPictureMode && mainActivity?.isInPictureInPictureMode != true) { progress ->
+        var capturedEdge = BACK_EDGE_NONE
+        var initialTouchX: Float? = null
         try {
             progress.collect { backEvent ->
-                swipeEdge = backEvent.swipeEdge
+                val edge = backEvent.swipeEdge
+                if (capturedEdge == BACK_EDGE_NONE &&
+                    (edge == BackEventCompat.EDGE_LEFT || edge == BackEventCompat.EDGE_RIGHT)
+                ) {
+                    capturedEdge = edge
+                }
+                if (initialTouchX == null) {
+                    initialTouchX = backEvent.touchX
+                }
             }
+            val fallbackEdge = mainActivity?.consumeRecentCancelledSwipeEdge() ?: BACK_EDGE_NONE
+            val state = currentUiState
+            val controller = currentActiveController
+            val tab = state.focusedTab
+            val canGoBackInPage = (controller.geckoSession != null && controller.canGoBackGecko) ||
+                (controller.geckoSession == null && controller.canGoBack()) ||
+                (tab != null && viewModel.canTabHistoryGoBack(tab.id)) ||
+                state.canGoBack
+
             when {
+                contextInfo != null -> contextInfo = null
+                showTabOverview -> showTabOverview = false
                 activeExtensionPopup != null -> activeExtensionPopup = null
                 showExtensionsMenuPopup -> showExtensionsMenuPopup = false
-                uiState.activeSheet != ActiveModalSheet.NONE -> viewModel.closeSheet()
-                uiState.isCenterTopSearchPopupVisible -> viewModel.setCenterTopSearchPopupVisible(false)
-                uiState.isFindInPageVisible -> viewModel.toggleFindInPage(false)
-                uiState.isSidebarOpen -> viewModel.setSidebarOpen(false)
-                uiState.isInPictureInPictureMode -> { /* Do not open sidebar in PiP */ }
+                state.activeSheet != ActiveModalSheet.NONE -> viewModel.closeSheet()
+                state.isCenterTopSearchPopupVisible -> viewModel.setCenterTopSearchPopupVisible(false)
+                state.isFindInPageVisible -> viewModel.toggleFindInPage(false)
+                state.isSidebarOpen && state.isSidebarBoxMode -> viewModel.setSidebarBoxMode(false)
+                state.isSidebarOpen && state.isAiSidePanelOpen -> viewModel.setAiSidePanelOpen(false)
+                state.isSidebarOpen -> viewModel.setSidebarOpen(false)
                 else -> {
-                    val swipeMode = uiState.sidebarConfig.horizontalSwipeMode
-                    if (swipeMode == HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
-                        if (swipeEdge == BackEventCompat.EDGE_RIGHT) {
-                            // User swiped leftwards from the right edge (<-): open side panel!
-                            viewModel.setSidebarOpen(true)
-                        } else {
-                            // User swiped rightwards from the left edge (->): go back in history!
-                            activeController.goBack()
+                    when (
+                        resolveNavigationBackAction(
+                            swipeEdge = capturedEdge,
+                            touchX = initialTouchX,
+                            viewportWidthPx = hostView.width,
+                            recentCancelledEdge = fallbackEdge,
+                            backSwipeMode = state.sidebarConfig.backSwipeSidebarMode,
+                            horizontalSwipeMode = state.sidebarConfig.horizontalSwipeMode,
+                            canGoBackInPage = canGoBackInPage
+                        )
+                    ) {
+                        NavigationBackAction.OPEN_SIDEBAR -> {
+                            val inPipNow = state.isInPictureInPictureMode || mainActivity?.isInPictureInPictureMode == true
+                            if (!inPipNow) {
+                                contextInfo = null
+                                com.example.gecko.ZenGeckoManager.suppressContextMenuFor(2000L)
+                                viewModel.setSidebarOpen(true)
+                            }
                         }
-                    } else {
-                        if (swipeEdge == BackEventCompat.EDGE_RIGHT) {
-                            // User swiped leftwards from the right edge (<-): go back in history!
-                            activeController.goBack()
-                        } else {
-                            // User swiped rightwards from the left edge (->): open side panel!
-                            viewModel.setSidebarOpen(true)
+                        NavigationBackAction.GO_BACK_PAGE -> {
+                            if (!performGoBack()) {
+                                viewModel.showBanner("Already at first page")
+                            }
+                        }
+                        NavigationBackAction.NO_OP_AT_FIRST_PAGE -> {
+                            viewModel.showBanner("Already at first page")
                         }
                     }
                 }
             }
-        } catch (_: CancellationException) {
-            // Gesture cancelled by user
+        } catch (e: CancellationException) {
+            mainActivity?.consumeRecentCancelledSwipeEdge()
+            throw e
         }
     }
 
@@ -642,28 +849,19 @@ fun ZenBrowserScreen(
         // The panel is only drawn after a fresh capture of the CURRENT page, so the blur behind it is never
         // the previous page / an old scroll position. The panel is not drawn yet during the capture, so it
         // can't end up in the snapshot.
-        var sidebarShown by remember { mutableStateOf(false) }
         LaunchedEffect(uiState.isSidebarOpen) {
-            if (!uiState.isSidebarOpen) {
-                sidebarShown = false
-                return@LaunchedEffect
-            }
+            if (!uiState.isSidebarOpen) return@LaunchedEffect
             if (blurEnabled && !sidebarPinnedOpen && !uiState.isInPictureInPictureMode) {
-                val before = softwareBlurredBackdrop
-                // Hard cap: a slow capture must never delay opening the panel (worst case it shows the last blur).
-                kotlinx.coroutines.withTimeoutOrNull(300L) {
+                runCatching {
                     val full = captureWindowWithSurfacesOrNull(localView)
                     if (full != null) {
                         val snapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                             com.example.ui.blur.ZenBackdropBlur.toSnapshot(full).also { if (full !== it.bitmap) full.recycle() }
                         }
                         backdropSnapshot = snapshot
-                        androidx.compose.runtime.snapshotFlow { softwareBlurredBackdrop }
-                            .first { it != null && it !== before }
                     }
                 }
             }
-            sidebarShown = true
         }
 
         // Blur is computed off the main thread, and only this effect reruns when the slider moves
@@ -706,7 +904,7 @@ fun ZenBrowserScreen(
                     onMergeTabsIntoSplitView = viewModel::openSplitViewWithTabs,
                     onConfirmSplitWithHomepage = viewModel::confirmSplitSelectionWithHomepageIfSingle,
                     onCancelSplitSelection = viewModel::cancelSplitTabSelection,
-                    onGoBack = { activeController.goBack() },
+                    onGoBack = { performGoBack() },
                     onGoForward = { activeController.goForward() },
                     canGoBack = activeController.canGoBack() || uiState.canGoBack,
                     canGoForward = activeController.canGoForward() || uiState.canGoForward,
@@ -733,6 +931,7 @@ fun ZenBrowserScreen(
                     onToggleDesktopMode = viewModel::toggleDesktopMode,
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
+                    onSeekMediaBy = onSeekMediaBy,
                     onDismissMediaBar = onDismissMediaBar,
                     onCloseAllWorkspaceTabs = { viewModel.closeAllTabsInWorkspace() },
                     onOpenTabOverview = { viewModel.setSidebarOpen(false); showTabOverview = true },
@@ -742,8 +941,29 @@ fun ZenBrowserScreen(
                             secondaryWebController.clearWebData()
                         }
                     },
+                    onClearRecentHistory = viewModel::clearRecentHistory,
                     onClearAllHistory = viewModel::clearAllHistory,
                     onDeleteHistoryEntry = viewModel::deleteHistoryEntry,
+                    onToggleBoxMode = viewModel::toggleSidebarBoxMode,
+                    onSelectBoxTab = viewModel::selectSidebarBoxTab,
+                    onOpenInNewTab = { url -> viewModel.createNewTab(initialInput = url, switchToTab = true) },
+                    onCreateNewTabInWorkspace = viewModel::createNewTabInWorkspace,
+                    onDeleteDownloadItem = viewModel::deleteDownloadItem,
+                    onPauseDownload = viewModel::pauseDownload,
+                    onResumeDownload = viewModel::resumeDownload,
+                    onCancelDownload = viewModel::cancelDownload,
+                    onClearAllDownloads = viewModel::clearAllDownloads,
+                    onOpenOfflinePage = viewModel::openOfflinePage,
+                    onDeleteOfflinePage = viewModel::deleteOfflinePage,
+                    onClearAllOfflinePages = viewModel::clearAllOfflinePages,
+                    onSaveCurrentPageOffline = {
+                        activeController.capturePageHtmlForOffline { html ->
+                            viewModel.saveCurrentPageForOffline(uiState.focusedTab?.id ?: "", html)
+                        }
+                    },
+                    onToggleAiSidePanel = viewModel::toggleAiSidePanel,
+                    onSelectAiProvider = viewModel::selectAiProvider,
+                    onCloseAiSidePanel = { viewModel.setAiSidePanelOpen(false) },
                     viewportGraphicsLayer = viewportGraphicsLayer,
                     softwareBlurredBackdrop = softwareBlurredBackdrop
                 )
@@ -773,7 +993,7 @@ fun ZenBrowserScreen(
                             viewModel.clearSearchSuggestions()
                             viewModel.navigateFocusedTab(url)
                         },
-                        onGoBack = { activeController.goBack() },
+                        onGoBack = { performGoBack() },
                         onGoForward = { activeController.goForward() },
                         canGoBack = activeController.canGoBack() || uiState.canGoBack,
                         canGoForward = activeController.canGoForward() || uiState.canGoForward,
@@ -843,8 +1063,16 @@ fun ZenBrowserScreen(
                     val backgroundWebViews = remember(allCachedWebViews.keys.toSet(), activeTabIds) {
                         allCachedWebViews.filterKeys { !activeTabIds.contains(it) }
                     }
+                    val openGeckoTabIds = com.example.gecko.ZenGeckoManager.getOpenSessionTabIds()
+                    val backgroundGeckoTabIds = remember(openGeckoTabIds, activeTabIds) {
+                        openGeckoTabIds.filter { !activeTabIds.contains(it) }
+                    }
 
-                    if (backgroundWebViews.isNotEmpty()) {
+                    LaunchedEffect(primaryTab?.id) {
+                        viewModel.noteTabSwitch()
+                    }
+
+                    if (backgroundWebViews.isNotEmpty() || backgroundGeckoTabIds.isNotEmpty()) {
                         Box(
                             modifier = Modifier
                                 .size(1.dp)
@@ -858,6 +1086,23 @@ fun ZenBrowserScreen(
                                             bgWebView
                                         },
                                         update = { _ -> },
+                                        modifier = Modifier.size(1.dp)
+                                    )
+                                }
+                            }
+                            backgroundGeckoTabIds.forEach { bgTabId ->
+                                androidx.compose.runtime.key("bg_gv_$bgTabId") {
+                                    androidx.compose.ui.viewinterop.AndroidView(
+                                        factory = { ctx ->
+                                            org.mozilla.geckoview.GeckoView(ctx).apply {
+                                                com.example.gecko.ZenGeckoManager.attachSessionToView(bgTabId, this)
+                                            }
+                                        },
+                                        update = { gv ->
+                                            if (!activeTabIds.contains(bgTabId)) {
+                                                com.example.gecko.ZenGeckoManager.attachSessionToView(bgTabId, gv)
+                                            }
+                                        },
                                         modifier = Modifier.size(1.dp)
                                     )
                                 }
@@ -920,7 +1165,8 @@ fun ZenBrowserScreen(
                                             onPopTabHistoryOffset = viewModel::popTabHistoryOffset,
                                             onGetTabHistoryEntries = viewModel::getTabHistoryEntries,
                                             onOpenSidebar = if (uiState.isInPictureInPictureMode) ({}) else ({ viewModel.setSidebarOpen(true) }),
-                                            onSavePassword = viewModel::insertPassword
+                                            onSavePassword = viewModel::insertPassword,
+                                            onStartAdmDownloadRequest = { activeAdmRequest = it }
                                         )
                                     }
                                 }
@@ -990,7 +1236,8 @@ fun ZenBrowserScreen(
                                             onPopTabHistoryOffset = viewModel::popTabHistoryOffset,
                                             onGetTabHistoryEntries = viewModel::getTabHistoryEntries,
                                             onOpenSidebar = if (uiState.isInPictureInPictureMode) ({}) else ({ viewModel.setSidebarOpen(true) }),
-                                            onSavePassword = viewModel::insertPassword
+                                            onSavePassword = viewModel::insertPassword,
+                                            onStartAdmDownloadRequest = { activeAdmRequest = it }
                                         )
                                     }
                                 }
@@ -1032,97 +1279,11 @@ fun ZenBrowserScreen(
                                     onPopTabHistoryOffset = viewModel::popTabHistoryOffset,
                                     onGetTabHistoryEntries = viewModel::getTabHistoryEntries,
                                     onOpenSidebar = if (uiState.isInPictureInPictureMode) ({}) else ({ viewModel.setSidebarOpen(true) }),
-                                    onSavePassword = viewModel::insertPassword
+                                    onSavePassword = viewModel::insertPassword,
+                                    onStartAdmDownloadRequest = { activeAdmRequest = it }
                                 )
                             }
                         }
-                    }
-
-                    // Left edge swipe detector: respects configured horizontalSwipeMode
-                    val swipeMode = sidebarCfg.horizontalSwipeMode
-                    if (!uiState.isSidebarOpen && !uiState.isInPictureInPictureMode) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.CenterStart)
-                                .fillMaxHeight()
-                                .width(36.dp)
-                                .pointerInput(swipeMode) {
-                                    var accumulatedDrag = 0f
-                                    var hasTriggered = false
-                                    detectHorizontalDragGestures(
-                                        onDragStart = {
-                                            accumulatedDrag = 0f
-                                            hasTriggered = false
-                                        },
-                                        onDragEnd = {
-                                            accumulatedDrag = 0f
-                                            hasTriggered = false
-                                        },
-                                        onDragCancel = {
-                                            accumulatedDrag = 0f
-                                            hasTriggered = false
-                                        },
-                                        onHorizontalDrag = { change, dragAmount ->
-                                            accumulatedDrag += dragAmount
-                                            if (!hasTriggered && accumulatedDrag > 32f) {
-                                                hasTriggered = true
-                                                change.consume()
-                                                if (swipeMode == HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
-                                                    // Swipe Right (->) navigates back!
-                                                    activeController.goBack()
-                                                } else {
-                                                    // Swipe Right (->) opens side panel!
-                                                    viewModel.setSidebarOpen(true)
-                                                }
-                                            }
-                                        }
-                                    )
-                                }
-                                .testTag("left_edge_swipe_zone")
-                        )
-                    }
-
-                    // Right edge swipe detector: respects configured horizontalSwipeMode
-                    if (!uiState.isSidebarOpen && !uiState.isInPictureInPictureMode) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .fillMaxHeight()
-                                .width(36.dp)
-                                .pointerInput(swipeMode) {
-                                    var accumulatedDrag = 0f
-                                    var hasTriggered = false
-                                    detectHorizontalDragGestures(
-                                        onDragStart = {
-                                            accumulatedDrag = 0f
-                                            hasTriggered = false
-                                        },
-                                        onDragEnd = {
-                                            accumulatedDrag = 0f
-                                            hasTriggered = false
-                                        },
-                                        onDragCancel = {
-                                            accumulatedDrag = 0f
-                                            hasTriggered = false
-                                        },
-                                        onHorizontalDrag = { change, dragAmount ->
-                                            accumulatedDrag += dragAmount
-                                            if (!hasTriggered && accumulatedDrag < -32f) {
-                                                hasTriggered = true
-                                                change.consume()
-                                                if (swipeMode == HorizontalSwipeNavigationMode.SWIPE_LEFT_PANEL_RIGHT_BACK) {
-                                                    // Swipe Left (<-) opens side panel!
-                                                    viewModel.setSidebarOpen(true)
-                                                } else {
-                                                    // Swipe Left (<-) goes back!
-                                                    activeController.goBack()
-                                                }
-                                            }
-                                        }
-                                    )
-                                }
-                                .testTag("right_edge_swipe_zone")
-                        )
                     }
 
                     // Customizable Side Edge Bar (No Exit Compact floating button; just the adjustable bar unless hidden in Compact Mode)
@@ -1142,28 +1303,41 @@ fun ZenBrowserScreen(
                             modifier = Modifier
                                 .align(if (isRightSide) Alignment.TopEnd else Alignment.TopStart)
                                 .offset { IntOffset(0, yOffsetPx) }
-                                .width(barWidthDp)
-                                .height(barHeightDp)
-                                .clip(
-                                    RoundedCornerShape(
-                                        topStart = if (isRightSide) 4.dp else 0.dp,
-                                        bottomStart = if (isRightSide) 4.dp else 0.dp,
-                                        topEnd = if (isRightSide) 0.dp else 4.dp,
-                                        bottomEnd = if (isRightSide) 0.dp else 4.dp
-                                    )
-                                )
-                                .background(Color(0xFF52525B).copy(alpha = 0.72f))
-                                .clickable { viewModel.toggleSidebar() }
+                                .width(32.dp)
+                                .height(barHeightDp.coerceAtLeast(48.dp))
+                                .clickable {
+                                    contextInfo = null
+                                    com.example.gecko.ZenGeckoManager.suppressContextMenuFor(2000L)
+                                    viewModel.toggleSidebar()
+                                }
                                 .pointerInput(isRightSide) {
                                     detectHorizontalDragGestures { change, dragAmount ->
                                         change.consume()
-                                        if ((!isRightSide && dragAmount > 16f) || (isRightSide && dragAmount < -16f)) {
+                                        contextInfo = null
+                                        com.example.gecko.ZenGeckoManager.suppressContextMenuFor(2000L)
+                                        if ((!isRightSide && dragAmount > 12f) || (isRightSide && dragAmount < -12f)) {
                                             viewModel.setSidebarOpen(true)
                                         }
                                     }
                                 }
-                                .testTag("sidebar_edge_pill_handle")
-                        )
+                                .testTag("sidebar_edge_pill_handle"),
+                            contentAlignment = if (isRightSide) Alignment.CenterEnd else Alignment.CenterStart
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(barWidthDp.coerceAtLeast(5.dp))
+                                    .height(barHeightDp)
+                                    .clip(
+                                        RoundedCornerShape(
+                                            topStart = if (isRightSide) 4.dp else 0.dp,
+                                            bottomStart = if (isRightSide) 4.dp else 0.dp,
+                                            topEnd = if (isRightSide) 0.dp else 4.dp,
+                                            bottomEnd = if (isRightSide) 0.dp else 4.dp
+                                        )
+                                    )
+                                    .background(Color(0xFF8E8E93).copy(alpha = 0.85f))
+                            )
+                        }
                     }
                 }
 
@@ -1180,7 +1354,7 @@ fun ZenBrowserScreen(
                             viewModel.clearSearchSuggestions()
                             viewModel.navigateFocusedTab(url)
                         },
-                        onGoBack = { activeController.goBack() },
+                        onGoBack = { performGoBack() },
                         onGoForward = { activeController.goForward() },
                         canGoBack = activeController.canGoBack() || uiState.canGoBack,
                         canGoForward = activeController.canGoForward() || uiState.canGoForward,
@@ -1220,7 +1394,7 @@ fun ZenBrowserScreen(
                     onMergeTabsIntoSplitView = viewModel::openSplitViewWithTabs,
                     onConfirmSplitWithHomepage = viewModel::confirmSplitSelectionWithHomepageIfSingle,
                     onCancelSplitSelection = viewModel::cancelSplitTabSelection,
-                    onGoBack = { activeController.goBack() },
+                    onGoBack = { performGoBack() },
                     onGoForward = { activeController.goForward() },
                     canGoBack = activeController.canGoBack() || uiState.canGoBack,
                     canGoForward = activeController.canGoForward() || uiState.canGoForward,
@@ -1247,6 +1421,7 @@ fun ZenBrowserScreen(
                     onToggleDesktopMode = viewModel::toggleDesktopMode,
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
+                    onSeekMediaBy = onSeekMediaBy,
                     onDismissMediaBar = onDismissMediaBar,
                     onCloseAllWorkspaceTabs = { viewModel.closeAllTabsInWorkspace() },
                     onOpenTabOverview = { viewModel.setSidebarOpen(false); showTabOverview = true },
@@ -1256,6 +1431,29 @@ fun ZenBrowserScreen(
                             secondaryWebController.clearWebData()
                         }
                     },
+                    onClearRecentHistory = viewModel::clearRecentHistory,
+                    onClearAllHistory = viewModel::clearAllHistory,
+                    onDeleteHistoryEntry = viewModel::deleteHistoryEntry,
+                    onToggleBoxMode = viewModel::toggleSidebarBoxMode,
+                    onSelectBoxTab = viewModel::selectSidebarBoxTab,
+                    onOpenInNewTab = { url -> viewModel.createNewTab(initialInput = url, switchToTab = true) },
+                    onCreateNewTabInWorkspace = viewModel::createNewTabInWorkspace,
+                    onDeleteDownloadItem = viewModel::deleteDownloadItem,
+                    onPauseDownload = viewModel::pauseDownload,
+                    onResumeDownload = viewModel::resumeDownload,
+                    onCancelDownload = viewModel::cancelDownload,
+                    onClearAllDownloads = viewModel::clearAllDownloads,
+                    onOpenOfflinePage = viewModel::openOfflinePage,
+                    onDeleteOfflinePage = viewModel::deleteOfflinePage,
+                    onClearAllOfflinePages = viewModel::clearAllOfflinePages,
+                    onSaveCurrentPageOffline = {
+                        activeController.capturePageHtmlForOffline { html ->
+                            viewModel.saveCurrentPageForOffline(uiState.focusedTab?.id ?: "", html)
+                        }
+                    },
+                    onToggleAiSidePanel = viewModel::toggleAiSidePanel,
+                    onSelectAiProvider = viewModel::selectAiProvider,
+                    onCloseAiSidePanel = { viewModel.setAiSidePanelOpen(false) },
                     viewportGraphicsLayer = viewportGraphicsLayer,
                     softwareBlurredBackdrop = softwareBlurredBackdrop
                 )
@@ -1267,14 +1465,14 @@ fun ZenBrowserScreen(
         // the area beside and below it not occupied by the side panel remains completely normal (Color.Transparent)!
         if (!sidebarPinnedOpen && !uiState.isInPictureInPictureMode) {
             AnimatedVisibility(
-                visible = sidebarShown && uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
+                visible = uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
                 enter = fadeIn(spring(stiffness = Spring.StiffnessMediumLow)),
                 exit = fadeOut(spring(stiffness = Spring.StiffnessMediumLow))
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Transparent)
+                        .background(Color.Black.copy(alpha = 0.45f))
                         .clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                             indication = null,
@@ -1286,7 +1484,7 @@ fun ZenBrowserScreen(
 
             val isRight = sidebarCfg.position == SidebarPosition.RIGHT
             AnimatedVisibility(
-                visible = sidebarShown && uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
+                visible = uiState.isSidebarOpen && !uiState.isInPictureInPictureMode,
                 enter = slideInHorizontally(
                     animationSpec = spring(
                         dampingRatio = Spring.DampingRatioNoBouncy,
@@ -1319,7 +1517,7 @@ fun ZenBrowserScreen(
                     onMergeTabsIntoSplitView = viewModel::openSplitViewWithTabs,
                     onConfirmSplitWithHomepage = viewModel::confirmSplitSelectionWithHomepageIfSingle,
                     onCancelSplitSelection = viewModel::cancelSplitTabSelection,
-                    onGoBack = { activeController.goBack() },
+                    onGoBack = { performGoBack() },
                     onGoForward = { activeController.goForward() },
                     canGoBack = activeController.canGoBack() || uiState.canGoBack,
                     canGoForward = activeController.canGoForward() || uiState.canGoForward,
@@ -1346,6 +1544,7 @@ fun ZenBrowserScreen(
                     onToggleDesktopMode = viewModel::toggleDesktopMode,
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
+                    onSeekMediaBy = onSeekMediaBy,
                     onDismissMediaBar = onDismissMediaBar,
                     onCloseAllWorkspaceTabs = { viewModel.closeAllTabsInWorkspace() },
                     onOpenTabOverview = { viewModel.setSidebarOpen(false); showTabOverview = true },
@@ -1355,6 +1554,29 @@ fun ZenBrowserScreen(
                             secondaryWebController.clearWebData()
                         }
                     },
+                    onClearRecentHistory = viewModel::clearRecentHistory,
+                    onClearAllHistory = viewModel::clearAllHistory,
+                    onDeleteHistoryEntry = viewModel::deleteHistoryEntry,
+                    onToggleBoxMode = viewModel::toggleSidebarBoxMode,
+                    onSelectBoxTab = viewModel::selectSidebarBoxTab,
+                    onOpenInNewTab = { url -> viewModel.createNewTab(initialInput = url, switchToTab = true) },
+                    onCreateNewTabInWorkspace = viewModel::createNewTabInWorkspace,
+                    onDeleteDownloadItem = viewModel::deleteDownloadItem,
+                    onPauseDownload = viewModel::pauseDownload,
+                    onResumeDownload = viewModel::resumeDownload,
+                    onCancelDownload = viewModel::cancelDownload,
+                    onClearAllDownloads = viewModel::clearAllDownloads,
+                    onOpenOfflinePage = viewModel::openOfflinePage,
+                    onDeleteOfflinePage = viewModel::deleteOfflinePage,
+                    onClearAllOfflinePages = viewModel::clearAllOfflinePages,
+                    onSaveCurrentPageOffline = {
+                        activeController.capturePageHtmlForOffline { html ->
+                            viewModel.saveCurrentPageForOffline(uiState.focusedTab?.id ?: "", html)
+                        }
+                    },
+                    onToggleAiSidePanel = viewModel::toggleAiSidePanel,
+                    onSelectAiProvider = viewModel::selectAiProvider,
+                    onCloseAiSidePanel = { viewModel.setAiSidePanelOpen(false) },
                     viewportGraphicsLayer = viewportGraphicsLayer,
                     softwareBlurredBackdrop = softwareBlurredBackdrop
                 )
@@ -1385,10 +1607,12 @@ fun ZenBrowserScreen(
             )
         }
 
-        // First-Time / On-Demand Sidebar & Features Tutorial Dialog
+        // Interactive Browser Setup Wizard (First-launch & triggerable anytime from Settings)
         if (uiState.showTutorialDialog) {
-            ZenTutorialDialog(
-                onDismiss = viewModel::dismissTutorial
+            com.example.ui.components.ZenSetupWizardDialog(
+                uiState = uiState,
+                onDismiss = viewModel::dismissTutorial,
+                onCompleteSetup = viewModel::completeSetupWizard
             )
         }
 
@@ -1489,7 +1713,13 @@ fun ZenBrowserScreen(
                     onUpdateHistoryDeletionInterval = viewModel::updateHistoryDeletionInterval,
                     onUpdateHorizontalSwipeMode = viewModel::updateHorizontalSwipeMode,
                     onUpdateBiometricLockEnabled = viewModel::updateBiometricLockEnabled,
+                    onUpdateBiometricGracePeriod = viewModel::updateBiometricGracePeriod,
                     onUpdateDataSaverEnabled = viewModel::updateDataSaverEnabled,
+                    onUpdateBackgroundPlayEnabled = viewModel::updateBackgroundPlayEnabled,
+                    onUpdatePlayInWindowPipEnabled = viewModel::updatePlayInWindowPipEnabled,
+                    onSelectStartPageGradient = { gradientId ->
+                        viewModel.updateStartPageAppearance(gradientId = gradientId)
+                    },
                     onOpenImportTabs = { viewModel.setImportTabsDialogVisible(true) },
                     onResetDefaults = viewModel::resetSidebarDefaults
                 )
@@ -1580,6 +1810,7 @@ fun ZenBrowserScreen(
                     onExit = viewModel::closeSheet,
                     onToggleExtension = viewModel::toggleFirefoxExtensionEnabled,
                     onToggleAllowInPrivate = viewModel::toggleFirefoxExtensionPrivateAllowed,
+                    onTogglePinExtension = { ext -> viewModel.togglePinExtensionToToolbar(ext.id) },
                     onUninstallExtension = viewModel::installOrUninstallFirefoxExtension,
                     onOpenExtensionPopup = { ext ->
                         viewModel.closeSheet()
@@ -1587,7 +1818,7 @@ fun ZenBrowserScreen(
                     },
                     onOpenAmoStore = {
                         viewModel.closeSheet()
-                        viewModel.createNewTab("https://addons.mozilla.org/en-US/firefox/")
+                        viewModel.createNewTab("https://addons.mozilla.org/en-US/android/")
                     },
                     onInstallFromUrl = { url ->
                         viewModel.installExtensionFromAmoPage(url, null)
@@ -1630,8 +1861,12 @@ fun ZenBrowserScreen(
                     onOpenInNewTab = { url -> viewModel.createNewTab(initialInput = url, switchToTab = true) },
                     onToggleBookmark = viewModel::toggleBookmarkTab,
                     onDeleteHistoryEntry = viewModel::deleteHistoryEntry,
+                    onClearRecentHistory = viewModel::clearRecentHistory,
                     onClearAllHistory = viewModel::clearAllHistory,
                     onDeleteDownloadItem = viewModel::deleteDownloadItem,
+                    onPauseDownload = viewModel::pauseDownload,
+                    onResumeDownload = viewModel::resumeDownload,
+                    onCancelDownload = viewModel::cancelDownload,
                     onClearAllDownloads = viewModel::clearAllDownloads,
                     onDeleteOfflinePage = viewModel::deleteOfflinePage,
                     onClearAllOfflinePages = viewModel::clearAllOfflinePages,
@@ -1696,8 +1931,8 @@ fun ZenBrowserScreen(
                 onDismiss = { activeAdmRequest = null },
                 onStartDownload = { submission ->
                     activeAdmRequest = null
-                    com.example.downloads.ZenAdmManager.startDownload(submission)
-                    viewModel.showBanner("ADM: Download started with ${submission.partsCount} parallel threads")
+                    com.example.downloads.ZenAdmManager.startDownload(submission, appContext)
+                    viewModel.showBanner("Downloading ${submission.fileName}...")
                 }
             )
         }
@@ -1762,12 +1997,14 @@ fun ZenBrowserScreen(
                 },
                 onToggleEnabled = {
                     viewModel.toggleFirefoxExtensionEnabled(liveExt)
+                    activeController.reload()
                 },
                 onLaunchUblockElementPicker = {
                     activeExtensionPopup = null
                     activeController.launchUblockElementPicker()
                 },
                 onRunScript = { script ->
+                    com.example.gecko.ZenGeckoManager.executeScriptOnActivePage(script)
                     activeController.webView?.evaluateJavascript(
                         "(function(){ try { $script } catch(e){} })();",
                         null
@@ -2191,21 +2428,65 @@ private fun FirefoxToolbar(
                     }
                 }
 
-                // Dedicated uBlock Origin quick button if installed
-                val ublockExt = uiState.firefoxExtensions.find { it.id == "ff_ublock_origin" && it.isInstalled }
-                if (ublockExt != null) {
-                    IconButton(
-                        onClick = { onOpenExtensionPopup(ublockExt) },
-                        modifier = Modifier
-                            .size(34.dp)
-                            .testTag("toolbar_ublock_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Shield,
-                            contentDescription = "uBlock Origin Quick Options",
-                            tint = if (ublockExt.isEnabled) Color(0xFF34D399) else Color(0xFF71717A),
-                            modifier = Modifier.size(18.dp)
-                        )
+                // Render Pinned Extensions from SidebarConfig (Bare Browser pattern)
+                val pinnedExts = uiState.sidebarConfig.pinnedExtensionIds.mapNotNull { id ->
+                    uiState.firefoxExtensions.find { it.id == id && it.isInstalled }
+                }
+
+                pinnedExts.forEach { ext ->
+                    if (ext.id == "ff_ublock_origin") {
+                        val blockedCount = uiState.recentBlockedEvents.size
+                        IconButton(
+                            onClick = { onOpenExtensionPopup(ext) },
+                            modifier = Modifier
+                                .size(34.dp)
+                                .testTag("toolbar_ublock_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = "uBlock Origin ($blockedCount blocked)",
+                                    tint = if (ext.isEnabled) Color(0xFF34D399) else Color(0xFF71717A),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                if (ext.isEnabled && blockedCount > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .offset(x = 5.dp, y = (-4).dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF800000))
+                                            .padding(horizontal = 3.dp, vertical = 0.5.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = if (blockedCount > 99) "99+" else blockedCount.toString(),
+                                            color = Color.White,
+                                            fontSize = 7.5.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        IconButton(
+                            onClick = { onOpenExtensionPopup(ext) },
+                            modifier = Modifier
+                                .size(34.dp)
+                                .testTag("toolbar_pinned_ext_${ext.id}")
+                        ) {
+                            Icon(
+                                imageVector = when {
+                                    ext.id.contains("dark") -> Icons.Default.Settings
+                                    ext.id.contains("privacy") -> Icons.Default.Security
+                                    else -> Icons.Default.Extension
+                                },
+                                contentDescription = "${ext.name} Options",
+                                tint = if (ext.isEnabled) Color(0xFF60A5FA) else Color(0xFF71717A),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
 
@@ -2262,21 +2543,6 @@ private fun FirefoxToolbar(
                             }
                         }
                     }
-                }
-
-                // Dedicated Advance Download Manager (ADM) Button
-                IconButton(
-                    onClick = onOpenAdm,
-                    modifier = Modifier
-                        .size(34.dp)
-                        .testTag("toolbar_adm_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = "Advance Download Manager (ADM)",
-                        tint = Color(0xFFD4D4D8),
-                        modifier = Modifier.size(18.dp)
-                    )
                 }
 
                 if (focusedUrl != "zen://home" && focusedUrl.isNotBlank()) {

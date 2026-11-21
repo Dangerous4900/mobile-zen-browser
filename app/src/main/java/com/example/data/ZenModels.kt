@@ -196,14 +196,34 @@ enum class SidebarToolItem(val id: String, val label: String) {
     SPLIT_VIEW("split_view", "Split View Button"),
     FIREFOX_EXTENSIONS("firefox_extensions", "Firefox Add-ons Button"),
     MEDIA_CAPTURE("media_capture", "Media Capture & Sniffer"),
-    DOWNLOAD_MANAGER("download_manager", "Advance Download Manager (ADM)"),
     READER_MODE("reader_mode", "Reader Mode Button"),
     PRIVACY_SHIELD("privacy_shield", "Privacy Shield Button"),
-    COMPACT_MODE("compact_mode", "Compact Mode Button"),
     CLEAR_TABS("clear_tabs", "Clear Unpinned Tabs Button"),
-    LIBRARY("library", "Bookmarks, History & Downloads"),
+    ARCHIVE_BOX("archive_box", "Box (Offline, Downloads, Bookmarks, Spaces, History)"),
     DESKTOP_MODE("desktop_mode", "Desktop Site Toggle"),
-    SETTINGS_BUTTON("settings_button", "Customize / Settings Button")
+    SETTINGS_BUTTON("settings_button", "Customize / Settings Button"),
+    AI_SIDE_PANEL("ai_side_panel", "AI Chat Side Panel (ChatGPT, Claude)")
+}
+
+enum class AiSidePanelProvider(val id: String, val label: String, val url: String) {
+    CHATGPT("chatgpt", "ChatGPT", "https://chatgpt.com/"),
+    CLAUDE("claude", "Claude", "https://claude.ai/"),
+    GEMINI("gemini", "Gemini", "https://gemini.google.com/"),
+    PERPLEXITY("perplexity", "Perplexity", "https://www.perplexity.ai/"),
+    GROK("grok", "Grok", "https://grok.com/");
+
+    companion object {
+        fun fromId(id: String): AiSidePanelProvider =
+            entries.find { it.id.equals(id, ignoreCase = true) } ?: CHATGPT
+    }
+}
+
+enum class SidebarBoxTab(val label: String) {
+    OFFLINE("Offline"),
+    DOWNLOADS("Downloads"),
+    BOOKMARKS("Bookmarks"),
+    SPACES("Spaces"),
+    HISTORY("History")
 }
 
 enum class TopToolbarToolItem(val id: String, val label: String) {
@@ -291,8 +311,17 @@ enum class StartPageGradientPreset(
     val label: String,
     val topHex: Long,
     val midHex: Long,
-    val bottomHex: Long
+    val bottomHex: Long,
+    val isColorful: Boolean = false
 ) {
+    SUNSET_AURORA("sunset_aurora", "Sunset Aurora", 0xFFFF5F6D, 0xFF9D2F6B, 0xFF1A0B2E, true),
+    CYBERWAVE_NEON("cyberwave_neon", "Cyberwave Neon", 0xFFEC4899, 0xFF6366F1, 0xFF0F172A, true),
+    OCEAN_BIOLUME("ocean_biolume", "Ocean Biolume", 0xFF06B6D4, 0xFF1D4ED8, 0xFF061224, true),
+    EMERALD_PRISM("emerald_prism", "Emerald Prism", 0xFF10B981, 0xFF0F766E, 0xFF051814, true),
+    SAKURA_DUSK("sakura_dusk", "Sakura Dusk", 0xFFF472B6, 0xFF7C3AED, 0xFF1E102E, true),
+    SOLAR_FLARE("solar_flare", "Solar Flare", 0xFFF59E0B, 0xFFDC2626, 0xFF1F0D09, true),
+    ELECTRIC_VIOLET("electric_violet", "Electric Violet", 0xFF8B5CF6, 0xFF3B82F6, 0xFF0B1026, true),
+    NORTHERN_LIGHTS("northern_lights", "Northern Lights", 0xFF34D399, 0xFF2563EB, 0xFF0B1120, true),
     PITCH_BLACK_AMOLED("pitch_black", "Pitch Black AMOLED", 0xFF000000, 0xFF000000, 0xFF000000),
     OBSIDIAN_MONO("obsidian_mono", "Obsidian Monochrome", 0xFF141417, 0xFF0A0A0C, 0xFF000000),
     GRAPHITE_MIST("graphite_mist", "Graphite Mist", 0xFF27272A, 0xFF141416, 0xFF050506),
@@ -314,6 +343,18 @@ enum class SidebarSectionType(val id: String, val label: String) {
     OPEN_TABS("open_tabs", "Tabs"),
     QUICK_TOOLS("quick_tools", "Split View & Bottom Tools"),
     WORKSPACES("workspaces", "Workspaces")
+}
+
+enum class BiometricGracePeriod(val id: String, val label: String, val durationMs: Long) {
+    IMMEDIATE("immediate", "Immediately", 0L),
+    ONE_MINUTE("one_minute", "1 minute", 60_000L),
+    FIVE_MINUTES("five_minutes", "5 minutes", 300_000L),
+    UNTIL_CLOSED("until_closed", "Until app closed", -1L);
+
+    companion object {
+        fun fromId(id: String): BiometricGracePeriod =
+            entries.find { it.id.equals(id, ignoreCase = true) } ?: IMMEDIATE
+    }
 }
 
 data class MediaPlaybackState(
@@ -339,10 +380,10 @@ data class SidebarConfig(
     val showPinnedTabs: Boolean = true,
     val showWorkspaceStripInBottomBar: Boolean = false,
     val showTabFaviconBadges: Boolean = true,
-    // Side Panel Navigation Controls & Back Swipe Gesture Mode (Go back in web history first, then open side panel)
+    // Side Panel Navigation Controls & Back Swipe Gesture Mode (Left edge opens side panel, right edge goes back)
     val showSidebarNavControls: Boolean = true,
     val hideEditPenIcon: Boolean = false,
-    val backSwipeSidebarMode: BackSwipeSidebarMode = BackSwipeSidebarMode.GO_BACK_THEN_SIDEBAR,
+    val backSwipeSidebarMode: BackSwipeSidebarMode = BackSwipeSidebarMode.LEFT_SIDEBAR_RIGHT_BACK,
     val horizontalSwipeMode: HorizontalSwipeNavigationMode = HorizontalSwipeNavigationMode.SWIPE_RIGHT_PANEL_LEFT_BACK,
     val openInNewTab: Boolean = false,
     val openHistoryInNewTab: Boolean = true,
@@ -355,8 +396,9 @@ data class SidebarConfig(
     val fakeSearchHeadline: String = "",
     val fakeSearchSnippet: String = "",
     val backgroundPlayEnabled: Boolean = true,
-    val playInWindowPipEnabled: Boolean = false,
+    val playInWindowPipEnabled: Boolean = true,
     val biometricLockEnabled: Boolean = false,
+    val biometricGracePeriod: BiometricGracePeriod = BiometricGracePeriod.IMMEDIATE,
     val dataSaverEnabled: Boolean = false,
     // Side Panel UI Size Scale (0.75f = 75% Compact to 1.35f = 135% Large, Default 1.0f = 100%)
     val sidebarUiScale: Float = 1.0f,
@@ -405,15 +447,17 @@ data class SidebarConfig(
     ),
     val enabledSidebarTools: List<SidebarToolItem> = SidebarToolItem.entries.filter {
         it != SidebarToolItem.SPLIT_VIEW && it != SidebarToolItem.MEDIA_CAPTURE &&
-            it != SidebarToolItem.DOWNLOAD_MANAGER && it != SidebarToolItem.PRIVACY_SHIELD &&
-            it != SidebarToolItem.CLEAR_TABS
+            it != SidebarToolItem.PRIVACY_SHIELD && it != SidebarToolItem.CLEAR_TABS &&
+            it != SidebarToolItem.AI_SIDE_PANEL
     },
     val enabledTopToolbarTools: List<TopToolbarToolItem> = listOf(
         TopToolbarToolItem.BACK,
         TopToolbarToolItem.FORWARD,
         TopToolbarToolItem.RELOAD,
-        TopToolbarToolItem.HOME
-    )
+        TopToolbarToolItem.HOME,
+        TopToolbarToolItem.EXTENSIONS
+    ),
+    val pinnedExtensionIds: Set<String> = setOf("ff_ublock_origin")
 )
 
 enum class AdBlockerLevel(val id: String, val label: String, val description: String) {

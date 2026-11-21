@@ -44,6 +44,21 @@
       defineVisibility(document);
     }
 
+    // Prevent web apps (YouTube, Twitch, Spotify, etc.) from registering visibility/freeze listeners that pause playback on screen-off
+    const blockedEvents = new Set(['visibilitychange', 'webkitvisibilitychange', 'freeze']);
+    if (typeof EventTarget !== 'undefined' && EventTarget.prototype && !EventTarget.prototype.__zenBgPlayPatched) {
+      const origAdd = EventTarget.prototype.addEventListener;
+      EventTarget.prototype.addEventListener = function(type, listener, options) {
+        if (typeof type === 'string' && blockedEvents.has(type.toLowerCase())) {
+          if (this === window || this === document) {
+            return;
+          }
+        }
+        return origAdd.call(this, type, listener, options);
+      };
+      EventTarget.prototype.__zenBgPlayPatched = true;
+    }
+
     const stopPropagation = function(e) {
       if (e) {
         e.stopImmediatePropagation();
@@ -66,7 +81,9 @@
     } catch (e) {}
 
     window.addEventListener('blur', function(e) {
-      if (e) e.stopImmediatePropagation();
+      if (e && (e.target === window || e.target === document)) {
+        e.stopImmediatePropagation();
+      }
     }, true);
 
   } catch (err) {}

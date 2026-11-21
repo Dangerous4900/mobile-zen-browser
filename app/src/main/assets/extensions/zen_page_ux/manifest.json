@@ -1,0 +1,29 @@
+{
+  "manifest_version": 2,
+  "name": "Zen Page UX Engine",
+  "version": "1.0",
+  "description": "Provides scroll resume, pull-to-refresh state, reliable muting, media detection, PiP styling, and extension script injection",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "page-ux@zenbrowser.com"
+    }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "nativeMessagingFromContent",
+    "geckoViewAddons",
+    "tabs",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

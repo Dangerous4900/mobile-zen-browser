@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -43,6 +46,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
@@ -51,25 +55,28 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MusicOff
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.FolderSpecial
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.PushPin
@@ -80,6 +87,7 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Splitscreen
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Translate
@@ -131,10 +139,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -146,6 +157,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.example.data.MediaPlaybackState
+import com.example.data.OfflinePageEntity
+import com.example.data.SidebarBoxTab
 import com.example.data.SidebarColorMode
 import com.example.data.SidebarPosition
 import com.example.data.SidebarSectionType
@@ -252,16 +265,34 @@ fun ZenSidebarPanel(
     onOpenExtensions: () -> Unit = {},
     onToggleSplitView: () -> Unit,
     onToggleReaderMode: () -> Unit,
-    onToggleCompactMode: () -> Unit,
+    onToggleCompactMode: () -> Unit = {},
     onToggleDesktopMode: () -> Unit = {},
     onToggleMediaPlayPause: () -> Unit,
     onToggleMediaMute: () -> Unit = {},
+    onSeekMediaBy: (Long) -> Unit = {},
     onDismissMediaBar: () -> Unit,
     onClearUnpinnedTabs: () -> Unit,
     onCloseAllWorkspaceTabs: () -> Unit = {},
     onOpenTabOverview: () -> Unit = {},
+    onClearRecentHistory: (Int) -> Unit = {},
     onClearAllHistory: () -> Unit = {},
     onDeleteHistoryEntry: (String) -> Unit = {},
+    onToggleBoxMode: () -> Unit = {},
+    onSelectBoxTab: (SidebarBoxTab) -> Unit = {},
+    onOpenInNewTab: (String) -> Unit = onNavigateUrl,
+    onCreateNewTabInWorkspace: (String) -> Unit = {},
+    onDeleteDownloadItem: (String) -> Unit = {},
+    onPauseDownload: (String) -> Unit = {},
+    onResumeDownload: (String) -> Unit = {},
+    onCancelDownload: (String) -> Unit = {},
+    onClearAllDownloads: () -> Unit = {},
+    onOpenOfflinePage: (OfflinePageEntity) -> Unit = {},
+    onDeleteOfflinePage: (String) -> Unit = {},
+    onClearAllOfflinePages: () -> Unit = {},
+    onSaveCurrentPageOffline: () -> Unit = {},
+    onToggleAiSidePanel: () -> Unit = {},
+    onSelectAiProvider: (String) -> Unit = {},
+    onCloseAiSidePanel: () -> Unit = {},
     viewportGraphicsLayer: androidx.compose.ui.graphics.layer.GraphicsLayer? = null,
     backdropImageBitmap: ImageBitmap? = null,
     softwareBlurredBackdrop: ImageBitmap? = null,
@@ -354,6 +385,13 @@ fun ZenSidebarPanel(
                     Modifier
                 }
             )
+            .then(
+                if (uiState.isAiSidePanelOpen) {
+                    Modifier.imePadding()
+                } else {
+                    Modifier
+                }
+            )
             .fillMaxHeight()
             .drawWithContent {
                 drawContent()
@@ -373,7 +411,7 @@ fun ZenSidebarPanel(
                     strokeWidth = strokeWidthPx
                 )
             }
-            .pointerInput(uiState.workspaces, currentWsIndex) {
+            .pointerInput(uiState.workspaces, currentWsIndex, uiState.isAiSidePanelOpen) {
                 var accumulatedDragX = 0f
                 var hasTriggeredSwipe = false
                 detectHorizontalDragGestures(
@@ -381,6 +419,7 @@ fun ZenSidebarPanel(
                     onDragEnd = { accumulatedDragX = 0f; hasTriggeredSwipe = false },
                     onDragCancel = { accumulatedDragX = 0f; hasTriggeredSwipe = false },
                     onHorizontalDrag = { change, dragAmount ->
+                        if (uiState.isAiSidePanelOpen) return@detectHorizontalDragGestures
                         accumulatedDragX += dragAmount
                         if (!hasTriggeredSwipe && kotlin.math.abs(accumulatedDragX) > 42f) {
                             hasTriggeredSwipe = true
@@ -408,7 +447,7 @@ fun ZenSidebarPanel(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = {},
-                onLongClick = { showEmptyAreaEditMenu = true }
+                onLongClick = { if (!uiState.isAiSidePanelOpen) showEmptyAreaEditMenu = true }
             )
             .testTag("zen_sidebar_panel"),
         shape = RectangleShape,
@@ -610,6 +649,50 @@ fun ZenSidebarPanel(
                     )
                     .padding(horizontal = 10.dp, vertical = 10.dp)
             ) {
+                val isAiPanelActive = uiState.isAiSidePanelOpen && enabledTools.contains(SidebarToolItem.AI_SIDE_PANEL)
+                if (uiState.isSidebarBoxMode) {
+                    ZenSidebarBoxContent(
+                        uiState = uiState,
+                        isLiquidGlass = isLiquidGlass,
+                        onExitBoxMode = onToggleBoxMode,
+                        onSelectBoxTab = onSelectBoxTab,
+                        onOpenSettings = { onOpenSheet(ActiveModalSheet.SIDEBAR_STUDIO) },
+                        onNavigateUrl = onNavigateUrl,
+                        onOpenInNewTab = onOpenInNewTab,
+                        onSelectTab = onSelectTab,
+                        onCloseTab = onCloseTab,
+                        onSelectWorkspace = onSelectWorkspace,
+                        onCreateNewTabInWorkspace = onCreateNewTabInWorkspace,
+                        onManageWorkspaces = { onOpenSheet(ActiveModalSheet.WORKSPACE_EDITOR) },
+                        onToggleBookmarkTab = onToggleBookmarkTab,
+                        onDeleteHistoryEntry = onDeleteHistoryEntry,
+                        onClearRecentHistory = onClearRecentHistory,
+                        onClearAllHistory = onClearAllHistory,
+                        onDeleteDownloadItem = onDeleteDownloadItem,
+                        onPauseDownload = onPauseDownload,
+                        onResumeDownload = onResumeDownload,
+                        onCancelDownload = onCancelDownload,
+                        onClearAllDownloads = onClearAllDownloads,
+                        onOpenOfflinePage = onOpenOfflinePage,
+                        onDeleteOfflinePage = onDeleteOfflinePage,
+                        onClearAllOfflinePages = onClearAllOfflinePages,
+                        onSaveCurrentPageOffline = onSaveCurrentPageOffline,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                if (isAiPanelActive) {
+                    ZenAiSidePanelContent(
+                        activeProviderId = uiState.activeAiProviderId,
+                        isLiquidGlass = isLiquidGlass,
+                        onSelectProvider = onSelectAiProvider,
+                        onOpenInNewTab = onOpenInNewTab,
+                        onClose = onCloseAiSidePanel,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                    )
+                } else {
                 // Backward & Forward Navigation Controls Row on the Side Panel
                 if (sidebarCfg.showSidebarNavControls && enabledTools.contains(SidebarToolItem.NAV_CONTROLS)) {
                     Row(
@@ -623,7 +706,9 @@ fun ZenSidebarPanel(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            sidebarCfg.enabledTopToolbarTools.forEach { tool ->
+                            sidebarCfg.enabledTopToolbarTools
+                                .filter { it != TopToolbarToolItem.EXTENSIONS && it != TopToolbarToolItem.EDIT_LAYOUT }
+                                .forEach { tool ->
                                 when (tool) {
                                     TopToolbarToolItem.BACK -> {
                                         var showBackHistoryMenu by remember { mutableStateOf(false) }
@@ -793,21 +878,6 @@ fun ZenSidebarPanel(
                                             )
                                         }
                                     }
-                                    TopToolbarToolItem.EXTENSIONS -> {
-                                        IconButton(
-                                            onClick = onOpenExtensions,
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .testTag("sidebar_nav_extensions_button")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Extension,
-                                                contentDescription = "Extensions",
-                                                tint = Color(0xFFD4D4D8),
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
                                     TopToolbarToolItem.PRIVACY_SHIELD -> {
                                         IconButton(
                                             onClick = { onOpenSheet(ActiveModalSheet.PRIVACY_SHIELD) },
@@ -838,38 +908,44 @@ fun ZenSidebarPanel(
                                             )
                                         }
                                     }
-                                    TopToolbarToolItem.EDIT_LAYOUT -> {
-                                        IconButton(
-                                            onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
-                                            modifier = Modifier
-                                                .size(30.dp)
-                                                .testTag("sidebar_edit_layout_top_button")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Edit,
-                                                contentDescription = "Edit Side Panel",
-                                                tint = Color(0xFFA1A1AA),
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
-                                    }
+                                    else -> {}
                                 }
                             }
                         }
 
-                        if (!sidebarCfg.hideEditPenIcon && !sidebarCfg.enabledTopToolbarTools.contains(TopToolbarToolItem.EDIT_LAYOUT)) {
-                            IconButton(
-                                onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .testTag("sidebar_edit_layout_top_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit Side Panel",
-                                    tint = Color(0xFFA1A1AA),
-                                    modifier = Modifier.size(14.dp)
-                                )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            if (sidebarCfg.enabledTopToolbarTools.contains(TopToolbarToolItem.EXTENSIONS)) {
+                                IconButton(
+                                    onClick = onOpenExtensions,
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("sidebar_nav_extensions_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Extension,
+                                        contentDescription = "Extensions",
+                                        tint = Color(0xFFD4D4D8),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            if (!sidebarCfg.hideEditPenIcon || sidebarCfg.enabledTopToolbarTools.contains(TopToolbarToolItem.EDIT_LAYOUT)) {
+                                IconButton(
+                                    onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .testTag("sidebar_edit_layout_top_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit Side Panel",
+                                        tint = Color(0xFFA1A1AA),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -1285,11 +1361,12 @@ fun ZenSidebarPanel(
                         )
                     }
                 }
+                }
 
                 // Bottom Area:
                 // - Media Bar (when media is playing, displayed right above the Split/Shield/Compact/Extensions bottom toolbar)
                 // - Bottom Toolbar (customizable tools)
-                // - Workspaces Dock
+                // - Workspaces Dock + optional AI button next to shrunk Space Switcher
                 SidebarBottomFooterBar(
                     workspaces = uiState.workspaces,
                     activeWorkspaceId = uiState.activeWorkspaceId,
@@ -1299,24 +1376,26 @@ fun ZenSidebarPanel(
                     showWorkspacesSection = sidebarCfg.sectionOrder.contains(SidebarSectionType.WORKSPACES),
                     isSplitView = uiState.isSplitViewEnabled || uiState.isSelectingSplitTabs,
                     isReaderMode = uiState.isReaderModeEnabled,
-                    isCompactMode = uiState.isCompactFullscreen,
                     isLiquidGlass = isLiquidGlass,
                     enabledExtensionsCount = uiState.firefoxExtensions.count { it.isInstalled && it.isEnabled },
+                    showAiButton = enabledTools.contains(SidebarToolItem.AI_SIDE_PANEL),
+                    isAiPanelOpen = isAiPanelActive,
+                    onToggleAiPanel = onToggleAiSidePanel,
                     onSelectWorkspace = onSelectWorkspace,
                     onManageWorkspaces = { onOpenSheet(ActiveModalSheet.WORKSPACE_EDITOR) },
                     onToggleSplit = onToggleSplitView,
                     onOpenPrivacy = { onOpenSheet(ActiveModalSheet.PRIVACY_SHIELD) },
                     onToggleReader = onToggleReaderMode,
-                    onToggleCompact = onToggleCompactMode,
                     isDesktopMode = uiState.isFocusedTabDesktopMode,
                     onToggleDesktopMode = onToggleDesktopMode,
                     onOpenExtensions = onOpenExtensions,
                     onOpenMediaCapture = { onOpenSheet(ActiveModalSheet.MEDIA_CAPTURE) },
-                    onOpenAdm = { onOpenSheet(ActiveModalSheet.ADVANCED_DOWNLOAD_MANAGER) },
-                    onOpenLibrary = { onOpenSheet(ActiveModalSheet.LIBRARY) },
+                    onToggleBoxMode = onToggleBoxMode,
+                    isBoxModeActive = uiState.isSidebarBoxMode,
                     onOpenStudio = { onOpenSheet(ActiveModalSheet.SIDEBAR_STUDIO) },
                     onToggleMediaPlayPause = onToggleMediaPlayPause,
                     onToggleMediaMute = onToggleMediaMute,
+                    onSeekMediaBy = onSeekMediaBy,
                     onSelectMediaTab = {
                         if (uiState.mediaPlaybackState.tabId.isNotBlank()) {
                             onSelectTab(uiState.mediaPlaybackState.tabId)
@@ -1324,6 +1403,7 @@ fun ZenSidebarPanel(
                     },
                     onDismissMediaBar = onDismissMediaBar
                 )
+                }
             }
             }
         }
@@ -2001,6 +2081,7 @@ private fun TabContextMenu(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SidebarBottomFooterBar(
     workspaces: List<WorkspaceEntity>,
@@ -2011,27 +2092,32 @@ private fun SidebarBottomFooterBar(
     showWorkspacesSection: Boolean,
     isSplitView: Boolean,
     isReaderMode: Boolean,
-    isCompactMode: Boolean,
     isLiquidGlass: Boolean,
     enabledExtensionsCount: Int,
+    showAiButton: Boolean = false,
+    isAiPanelOpen: Boolean = false,
+    onToggleAiPanel: () -> Unit = {},
     onSelectWorkspace: (String) -> Unit,
     onManageWorkspaces: () -> Unit,
     onToggleSplit: () -> Unit,
     onOpenPrivacy: () -> Unit,
     onToggleReader: () -> Unit,
-    onToggleCompact: () -> Unit,
     isDesktopMode: Boolean = false,
     onToggleDesktopMode: () -> Unit = {},
     onOpenExtensions: () -> Unit,
     onOpenMediaCapture: () -> Unit = {},
-    onOpenAdm: () -> Unit = {},
-    onOpenLibrary: () -> Unit = {},
+    onToggleBoxMode: () -> Unit = {},
+    isBoxModeActive: Boolean = false,
     onOpenStudio: () -> Unit,
     onToggleMediaPlayPause: () -> Unit,
     onToggleMediaMute: () -> Unit = {},
+    onSeekMediaBy: (Long) -> Unit = {},
     onSelectMediaTab: () -> Unit,
     onDismissMediaBar: () -> Unit
 ) {
+    val haptics = LocalHapticFeedback.current
+    var showExtendedMediaOptions by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -2050,6 +2136,54 @@ private fun SidebarBottomFooterBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                        onLongClick = {}
+                    )
+                    .pointerInput(mediaPlaybackState.isActive, mediaPlaybackState.tabId) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val startPos = down.position
+                            val holdThresholdMs = 1500L
+                            val startedAt = System.currentTimeMillis()
+                            var triggered = false
+                            while (true) {
+                                val remaining = holdThresholdMs - (System.currentTimeMillis() - startedAt)
+                                if (remaining <= 0L) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    showExtendedMediaOptions = true
+                                    triggered = true
+                                    break
+                                }
+                                val event = withTimeoutOrNull(remaining) {
+                                    awaitPointerEvent(PointerEventPass.Initial)
+                                }
+                                if (event == null) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    showExtendedMediaOptions = true
+                                    triggered = true
+                                    break
+                                }
+                                val change = event.changes.firstOrNull { it.id == down.id }
+                                    ?: event.changes.firstOrNull()
+                                if (change == null || !change.pressed) {
+                                    break
+                                }
+                                if ((change.position - startPos).getDistance() > viewConfiguration.touchSlop) {
+                                    break
+                                }
+                            }
+                            if (triggered) {
+                                while (true) {
+                                    val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                    ev.changes.forEach { it.consume() }
+                                    if (ev.changes.none { it.pressed }) break
+                                }
+                            }
+                        }
+                    }
                     .testTag("sidebar_media_playback_bar")
             ) {
                 Row(
@@ -2168,15 +2302,351 @@ private fun SidebarBottomFooterBar(
             }
         }
 
+        if (showExtendedMediaOptions && mediaPlaybackState.isActive) {
+            AlertDialog(
+                onDismissRequest = { showExtendedMediaOptions = false },
+                containerColor = Color(0xFF16161B),
+                titleContentColor = Color(0xFFF4F4F6),
+                textContentColor = Color(0xFFD4D4D8),
+                modifier = Modifier.testTag("media_extended_options_sheet"),
+                title = {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = mediaPlaybackState.title.ifBlank { "Now Playing" },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (mediaPlaybackState.domain.isNotBlank()) {
+                            Text(
+                                text = mediaPlaybackState.domain,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFA1A1AA),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // Primary transport controls row: -10s, Play/Pause, +10s
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { onSeekMediaBy(-10_000L) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("media_ext_seek_back_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FastRewind,
+                                    contentDescription = "Back 10 seconds",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("10s", maxLines = 1)
+                            }
+                            Button(
+                                onClick = onToggleMediaPlayPause,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("media_ext_play_pause_btn")
+                            ) {
+                                Icon(
+                                    imageVector = if (mediaPlaybackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (mediaPlaybackState.isPlaying) "Pause" else "Play",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { onSeekMediaBy(10_000L) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("media_ext_seek_forward_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FastForward,
+                                    contentDescription = "Forward 10 seconds",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("10s", maxLines = 1)
+                            }
+                        }
+
+                        HorizontalDivider(color = Color(0xFF27272A))
+
+                        Surface(
+                            onClick = onToggleMediaMute,
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF202026),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("media_ext_mute_btn")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (mediaPlaybackState.isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                    contentDescription = if (mediaPlaybackState.isMuted) "Unmute Audio" else "Mute Audio",
+                                    tint = if (mediaPlaybackState.isMuted) Color(0xFFEF4444) else Color(0xFFF4F4F6)
+                                )
+                                Text(
+                                    text = if (mediaPlaybackState.isMuted) "Unmute Audio" else "Mute Audio",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFFF4F4F6)
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                showExtendedMediaOptions = false
+                                onSelectMediaTab()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF202026),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("media_ext_jump_tab_btn")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.OpenInNew,
+                                    contentDescription = "Jump to Playing Tab",
+                                    tint = Color(0xFF60A5FA)
+                                )
+                                Text(
+                                    text = "Jump to Playing Tab",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFFF4F4F6)
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                showExtendedMediaOptions = false
+                                onOpenMediaCapture()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF202026),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("media_ext_capture_btn")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Media Capture & Download",
+                                    tint = Color(0xFF34D399)
+                                )
+                                Text(
+                                    text = "Media Capture / Download",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFFF4F4F6)
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                showExtendedMediaOptions = false
+                                onDismissMediaBar()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF2C181A),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("media_ext_stop_dismiss_btn")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Stop,
+                                    contentDescription = "Stop and Dismiss Media",
+                                    tint = Color(0xFFEF4444)
+                                )
+                                Text(
+                                    text = "Stop & Dismiss",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFFFCA5A5)
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { showExtendedMediaOptions = false },
+                        modifier = Modifier.testTag("media_ext_close_btn")
+                    ) {
+                        Text("Done")
+                    }
+                }
+            )
+        }
+
         HorizontalDivider(
             color = if (isLiquidGlass) Color.White.copy(alpha = 0.16f) else Color(0xFF222226),
             thickness = 1.dp
         )
 
-        // Bottom Toolbar Row: Dynamically rendered in user's enabledSidebarTools order
-        if (showQuickToolsSection) {
+        // Workspaces / Spaces Switcher placed directly above the Bottom Toolbar.
+        // When AI Side Panel is toggled on, shrink the space switcher a bit and place the AI icon next to it.
+        if (showWorkspacesSection) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isLiquidGlass) Color.White.copy(alpha = 0.08f) else Color(0xFF101013))
+                        .border(
+                            1.dp,
+                            if (isLiquidGlass) Color.White.copy(alpha = 0.22f) else Color(0xFF222226),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(if (showAiButton) 3.dp else 4.dp)
+                        .testTag("sidebar_workspaces_switcher"),
+                    horizontalArrangement = Arrangement.spacedBy(if (showAiButton) 2.dp else 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    workspaces.forEach { ws ->
+                        val isSelected = ws.id == activeWorkspaceId
+                        Surface(
+                            onClick = { onSelectWorkspace(ws.id) },
+                            shape = RoundedCornerShape(6.dp),
+                            color = when {
+                                isSelected && isLiquidGlass -> Color.White.copy(alpha = 0.22f)
+                                isSelected -> Color(0xFF27272B)
+                                else -> Color.Transparent
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(if (showAiButton) 28.dp else 30.dp)
+                                .testTag("sidebar_ws_chip_${ws.id}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = if (showAiButton) 4.dp else 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                if (ws.isPrivate) {
+                                    ShadeGlassIcon(
+                                        tint = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
+                                        size = if (showAiButton) 13.dp else 14.dp
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = workspaceIconForKey(ws.iconKey),
+                                        contentDescription = ws.name,
+                                        tint = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
+                                        modifier = Modifier.size(if (showAiButton) 13.dp else 14.dp)
+                                    )
+                                }
+                                if (workspaces.size <= 2) {
+                                    Spacer(modifier = Modifier.width(if (showAiButton) 4.dp else 6.dp))
+                                    Text(
+                                        text = ws.name,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Surface(
+                        onClick = onManageWorkspaces,
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color.Transparent,
+                        modifier = Modifier
+                            .size(if (showAiButton) 26.dp else 30.dp)
+                            .testTag("manage_workspaces_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Manage Workspaces",
+                                tint = Color(0xFFD4D4D8),
+                                modifier = Modifier.size(if (showAiButton) 14.dp else 15.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (showAiButton) {
+                    Surface(
+                        onClick = onToggleAiPanel,
+                        shape = RoundedCornerShape(8.dp),
+                        color = when {
+                            isAiPanelOpen && isLiquidGlass -> Color.White.copy(alpha = 0.26f)
+                            isAiPanelOpen -> Color(0xFF27272D)
+                            isLiquidGlass -> Color.White.copy(alpha = 0.08f)
+                            else -> Color(0xFF101013)
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            when {
+                                isAiPanelOpen -> Color(0xFFE4E4E7)
+                                isLiquidGlass -> Color.White.copy(alpha = 0.22f)
+                                else -> Color(0xFF222226)
+                            }
+                        ),
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("sidebar_ai_panel_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "AI Chat Side Panel",
+                                tint = if (isAiPanelOpen) Color.White else Color(0xFFD4D4D8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Bottom Toolbar Row positioned at the very bottom of the Side Panel
+        if (showQuickToolsSection) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("sidebar_bottom_toolbar_row"),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -2198,15 +2668,6 @@ private fun SidebarBottomFooterBar(
                                 active = false,
                                 onClick = onOpenPrivacy,
                                 testTag = "sidebar_shield_button"
-                            )
-                        }
-                        SidebarToolItem.COMPACT_MODE -> {
-                            ToolbarIconToggle(
-                                icon = Icons.Default.Fullscreen,
-                                label = "Compact",
-                                active = isCompactMode,
-                                onClick = onToggleCompact,
-                                testTag = "quick_tool_compact_mode"
                             )
                         }
                         SidebarToolItem.READER_MODE -> {
@@ -2236,22 +2697,13 @@ private fun SidebarBottomFooterBar(
                                 testTag = "quick_tool_media_capture"
                             )
                         }
-                        SidebarToolItem.DOWNLOAD_MANAGER -> {
+                        SidebarToolItem.ARCHIVE_BOX -> {
                             ToolbarIconToggle(
-                                icon = Icons.Default.Download,
-                                label = "Downloads (ADM)",
-                                active = false,
-                                onClick = onOpenAdm,
-                                testTag = "quick_tool_adm"
-                            )
-                        }
-                        SidebarToolItem.LIBRARY -> {
-                            ToolbarIconToggle(
-                                icon = Icons.Default.FolderSpecial,
-                                label = "Library",
-                                active = false,
-                                onClick = onOpenLibrary,
-                                testTag = "quick_tool_library"
+                                icon = Icons.Default.Inventory2,
+                                label = "Box (Offline, Downloads, Bookmarks, Spaces, History)",
+                                active = isBoxModeActive,
+                                onClick = onToggleBoxMode,
+                                testTag = "quick_tool_archive_box"
                             )
                         }
                         SidebarToolItem.DESKTOP_MODE -> {
@@ -2272,89 +2724,18 @@ private fun SidebarBottomFooterBar(
                                 testTag = "quick_tool_sidebar_studio"
                             )
                         }
-                        else -> {}
-                    }
-                }
-            }
-        }
-
-        // Bottom Workspaces Dock
-        if (showWorkspacesSection) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (isLiquidGlass) Color.White.copy(alpha = 0.08f) else Color(0xFF101013))
-                    .border(
-                        1.dp,
-                        if (isLiquidGlass) Color.White.copy(alpha = 0.22f) else Color(0xFF222226),
-                        RoundedCornerShape(8.dp)
-                    )
-                    .padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                workspaces.forEach { ws ->
-                    val isSelected = ws.id == activeWorkspaceId
-                    Surface(
-                        onClick = { onSelectWorkspace(ws.id) },
-                        shape = RoundedCornerShape(6.dp),
-                        color = when {
-                            isSelected && isLiquidGlass -> Color.White.copy(alpha = 0.22f)
-                            isSelected -> Color(0xFF27272B)
-                            else -> Color.Transparent
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(30.dp)
-                            .testTag("sidebar_ws_chip_${ws.id}")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            if (ws.isPrivate) {
-                                ShadeGlassIcon(
-                                    tint = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
-                                    size = 14.dp
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = workspaceIconForKey(ws.iconKey),
-                                    contentDescription = ws.name,
-                                    tint = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                            if (workspaces.size <= 2) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = ws.name,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                        SidebarToolItem.AI_SIDE_PANEL -> {
+                            if (!showWorkspacesSection) {
+                                ToolbarIconToggle(
+                                    icon = Icons.Default.AutoAwesome,
+                                    label = "AI Chat Side Panel",
+                                    active = isAiPanelOpen,
+                                    onClick = onToggleAiPanel,
+                                    testTag = "sidebar_ai_panel_button"
                                 )
                             }
                         }
-                    }
-                }
-                Surface(
-                    onClick = onManageWorkspaces,
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color.Transparent,
-                    modifier = Modifier
-                        .size(30.dp)
-                        .testTag("manage_workspaces_button")
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Manage Workspaces",
-                            tint = Color(0xFFD4D4D8),
-                            modifier = Modifier.size(15.dp)
-                        )
+                        else -> {}
                     }
                 }
             }

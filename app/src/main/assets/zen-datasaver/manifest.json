@@ -3,7 +3,7 @@
   "name": "Zen Data Saver",
   "version": "1.0",
   "description": "Blocks image downloads to save mobile data.",
-  "browser_specific_settings": { "gecko": { "id": "datasaver@zenbrowser" } },
+  "browser_specific_settings": { "gecko": { "id": "datasaver@zenbrowser.com" } },
   "permissions": ["webRequest", "webRequestBlocking", "<all_urls>"],
   "background": { "scripts": ["background.js"] }
 }

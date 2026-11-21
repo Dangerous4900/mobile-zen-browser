@@ -1,0 +1,32 @@
+{
+  "manifest_version": 2,
+  "name": "Zen Shield Ad & Popup Blocker",
+  "version": "1.0",
+  "description": "Blocks ads, video ads, trackers, cosmetic ad slots, and pop-ups across pages.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "adblock@zenbrowser.com"
+    }
+  },
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "tabs",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["cosmetic.css"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    "page_shield.js"
+  ]
+}

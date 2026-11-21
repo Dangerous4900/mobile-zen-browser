@@ -44,6 +44,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
@@ -115,6 +117,7 @@ fun ZenExtensionsClintStyleScreen(
     onExit: () -> Unit,
     onToggleExtension: (FirefoxExtensionEntity) -> Unit,
     onToggleAllowInPrivate: (FirefoxExtensionEntity) -> Unit,
+    onTogglePinExtension: (FirefoxExtensionEntity) -> Unit = {},
     onUninstallExtension: (FirefoxExtensionEntity) -> Unit,
     onOpenExtensionPopup: (FirefoxExtensionEntity) -> Unit,
     onOpenAmoStore: () -> Unit,
@@ -290,9 +293,13 @@ fun ZenExtensionsClintStyleScreen(
 
                     // Extension Cards
                     items(filtered, key = { it.id }) { ext ->
+                        val isPinned = uiState.sidebarConfig.pinnedExtensionIds.contains(ext.id)
                         ClintExtensionCard(
                             extension = ext,
+                            isPinned = isPinned,
                             onToggle = { onToggleExtension(ext) },
+                            onTogglePin = { onTogglePinExtension(ext) },
+                            onToggleAllowInPrivate = { onToggleAllowInPrivate(ext) },
                             onOpenPopup = { onOpenExtensionPopup(ext) },
                             onOpenDetail = { selectedDetailExtension = ext },
                             onUninstall = { onUninstallExtension(ext) }
@@ -388,21 +395,21 @@ private fun ClintStyleHeroCard(
                 .padding(22.dp)
         ) {
             Text(
-                text = "Extensions",
+                text = "Firefox Add-ons",
                 color = Color.White,
-                fontSize = 28.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = if (onCount + offCount == 0) "Boost browsing with ad-blocking, privacy shields, and web add-ons"
-                else "$onCount active · $offCount disabled",
+                text = if (onCount + offCount == 0) "Install Mobile Firefox Add-ons (.xpi) or userscripts (.user.js) from addons.mozilla.org"
+                else "$onCount active · $offCount disabled · Firefox Mobile Add-on engine ready",
                 color = Color.White.copy(alpha = 0.85f),
                 fontSize = 14.sp,
                 lineHeight = 20.sp,
-                modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
+                modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
             )
 
-            // 3 Hero Action Buttons (Get Add-ons, Install from File, Install from Link)
+            // Store & Import Action Buttons
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -416,7 +423,7 @@ private fun ClintStyleHeroCard(
                 )
                 HeroActionButton(
                     icon = Icons.Filled.Folder,
-                    label = "Install from File",
+                    label = "Install .XPI File",
                     onClick = onPickFile,
                     modifier = Modifier.testTag("hero_install_file_btn")
                 )
@@ -513,7 +520,10 @@ private fun ClintFilterPill(
 @Composable
 private fun ClintExtensionCard(
     extension: FirefoxExtensionEntity,
+    isPinned: Boolean = false,
     onToggle: () -> Unit,
+    onTogglePin: () -> Unit = {},
+    onToggleAllowInPrivate: () -> Unit = {},
     onOpenPopup: () -> Unit,
     onOpenDetail: () -> Unit,
     onUninstall: () -> Unit
@@ -625,7 +635,47 @@ private fun ClintExtensionCard(
                 modifier = Modifier.clickable { onOpenDetail() }
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Quick Toggle: Allow in Private Tabs
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onToggleAllowInPrivate() }
+                    .padding(horizontal = 2.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = if (extension.allowInPrivate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = "Allow in Private Tabs",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (extension.allowInPrivate) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (extension.allowInPrivate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = extension.allowInPrivate,
+                    onCheckedChange = { onToggleAllowInPrivate() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                    ),
+                    modifier = Modifier.testTag("ext_private_switch_${extension.id}")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -659,6 +709,34 @@ private fun ClintExtensionCard(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    // Toolbar Pin Toggle Button
+                    Surface(
+                        onClick = onTogglePin,
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isPinned) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(1.dp, if (isPinned) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                        modifier = Modifier.testTag("ext_pin_toolbar_${extension.id}")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                                contentDescription = if (isPinned) "Unpin from toolbar" else "Pin to toolbar",
+                                tint = if (isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = if (isPinned) "Pinned" else "Pin",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isPinned) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -787,13 +865,13 @@ private fun ClintInstallLinkDialog(
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "Install Extension from Link",
+                    text = "Install Firefox Add-on",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Enter a direct .xpi download URL or Mozilla Add-ons (AMO) listing link.",
+                    text = "Paste a Firefox Mobile Add-ons URL (addons.mozilla.org), .xpi link, or .user.js script.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
@@ -802,7 +880,7 @@ private fun ClintInstallLinkDialog(
                 OutlinedTextField(
                     value = urlInput,
                     onValueChange = { urlInput = it },
-                    placeholder = { Text("https://addons.mozilla.org/firefox/downloads/file/...") },
+                    placeholder = { Text("https://addons.mozilla.org/en-US/android/addon/...") },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("install_link_input"),

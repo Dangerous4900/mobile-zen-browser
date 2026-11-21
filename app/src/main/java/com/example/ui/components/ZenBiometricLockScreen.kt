@@ -60,7 +60,7 @@ fun ZenBiometricLockScreen(
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            Color(0xFF2563EB).copy(alpha = 0.25f),
+                            Color.White.copy(alpha = 0.14f),
                             Color(0xFF09090C).copy(alpha = 0.0f)
                         )
                     )
@@ -70,7 +70,7 @@ fun ZenBiometricLockScreen(
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF131318).copy(alpha = 0.95f),
-            border = BorderStroke(1.dp, Color(0xFF27272A)),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
             shadowElevation = 16.dp,
             modifier = Modifier
                 .padding(28.dp)
@@ -91,8 +91,8 @@ fun ZenBiometricLockScreen(
                         .background(
                             Brush.linearGradient(
                                 listOf(
-                                    Color(0xFF2563EB).copy(alpha = 0.3f),
-                                    Color(0xFF60A5FA).copy(alpha = 0.15f)
+                                    Color.White.copy(alpha = 0.18f),
+                                    Color.White.copy(alpha = 0.08f)
                                 )
                             )
                         ),
@@ -101,7 +101,7 @@ fun ZenBiometricLockScreen(
                     Icon(
                         imageVector = Icons.Default.Lock,
                         contentDescription = "Browser Locked",
-                        tint = Color(0xFF60A5FA),
+                        tint = Color.White,
                         modifier = Modifier.size(38.dp)
                     )
                 }
@@ -112,7 +112,7 @@ fun ZenBiometricLockScreen(
                     text = "Zen Browser is Locked",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFFF4F4F6),
+                    color = Color.White,
                     textAlign = TextAlign.Center
                 )
 
@@ -149,8 +149,8 @@ fun ZenBiometricLockScreen(
                     onClick = onTriggerUnlock,
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2563EB),
-                        contentColor = Color.White
+                        containerColor = Color.White,
+                        contentColor = Color(0xFF09090C)
                     ),
                     modifier = Modifier
                         .fillMaxWidth()

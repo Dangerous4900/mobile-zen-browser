@@ -123,6 +123,9 @@ interface ZenDao {
     @Query("DELETE FROM history_entries WHERE timestamp < :cutoffTimestamp")
     suspend fun deleteHistoryOlderThan(cutoffTimestamp: Long)
 
+    @Query("DELETE FROM history_entries WHERE timestamp >= :sinceTimestamp")
+    suspend fun deleteHistorySince(sinceTimestamp: Long)
+
     // Download Queries
     @Query("SELECT * FROM download_items ORDER BY timestamp DESC LIMIT 100")
     fun getAllDownloads(): Flow<List<DownloadItemEntity>>

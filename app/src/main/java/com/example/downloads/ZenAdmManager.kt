@@ -21,7 +21,10 @@ object ZenAdmManager {
 
     private val activeJobs = ConcurrentHashMap<String, Job>()
 
-    fun startDownload(sub: AdmDownloadSubmission): AdmDownloadTask {
+    fun startDownload(sub: AdmDownloadSubmission, context: android.content.Context? = null): AdmDownloadTask {
+        if (context != null) {
+            enqueueSystemDownload(context, sub)
+        }
         val totalBytes = if (sub.totalBytes > 0) sub.totalBytes else 28_500_000L // Default estimate if unknown
         val parts = sub.partsCount.coerceIn(1, 16)
 
@@ -57,6 +60,97 @@ object ZenAdmManager {
         _tasks.update { listOf(task) + it }
         launchWorker(task.id)
         return task
+    }
+
+    fun requestAllFilesAccessIfNecessary(context: android.content.Context) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            if (!android.os.Environment.isExternalStorageManager()) {
+                try {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                        data = android.net.Uri.parse("package:${context.packageName}")
+                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                    android.widget.Toast.makeText(context, "Please allow All Files Access to save downloads to storage", android.widget.Toast.LENGTH_LONG).show()
+                } catch (_: Exception) {
+                    try {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    fun enqueueSystemDownload(context: android.content.Context, sub: AdmDownloadSubmission) {
+        requestAllFilesAccessIfNecessary(context)
+        try {
+            val url = sub.url
+            if (url.startsWith("data:")) {
+                val base64Data = url.substringAfter(",")
+                val bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+                
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    val resolver = context.contentResolver
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, sub.fileName)
+                        val catMime = when (sub.category) {
+                            AdmCategory.VIDEO -> "video/*"
+                            AdmCategory.AUDIO -> "audio/*"
+                            AdmCategory.DOCUMENT -> "application/pdf"
+                            AdmCategory.SOFTWARE -> "application/vnd.android.package-archive"
+                            else -> "*/*"
+                        }
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, catMime)
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                    }
+                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { os -> os.write(bytes) }
+                        android.widget.Toast.makeText(context, "Saved ${sub.fileName} to Downloads", android.widget.Toast.LENGTH_LONG).show()
+                        return
+                    }
+                }
+
+                val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                if (!dir.exists()) dir.mkdirs()
+                val file = java.io.File(dir, sub.fileName)
+                file.writeBytes(bytes)
+                android.widget.Toast.makeText(context, "Saved ${sub.fileName} to Downloads", android.widget.Toast.LENGTH_LONG).show()
+                return
+            }
+
+            val dm = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as? android.app.DownloadManager
+            if (dm != null && (url.startsWith("http://") || url.startsWith("https://"))) {
+                val req = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+                    .setTitle(sub.fileName)
+                    .setDescription("Downloading file via Zen Browser")
+                    .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    .setAllowedOverRoaming(true)
+                    .setAllowedOverMetered(true)
+
+                try {
+                    req.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, sub.fileName)
+                } catch (_: Exception) {
+                    val fallbackDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+                    if (fallbackDir != null) {
+                        req.setDestinationUri(android.net.Uri.fromFile(java.io.File(fallbackDir, sub.fileName)))
+                    }
+                }
+                
+                val cookies = android.webkit.CookieManager.getInstance().getCookie(url)
+                if (!cookies.isNullOrEmpty()) {
+                    req.addRequestHeader("Cookie", cookies)
+                }
+                req.addRequestHeader("User-Agent", "Mozilla/5.0 (Android; Mobile) ZenBrowser/1.0")
+                dm.enqueue(req)
+                android.widget.Toast.makeText(context, "Downloading ${sub.fileName}...", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(context, "Download started: ${sub.fileName}", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun launchWorker(taskId: String) {

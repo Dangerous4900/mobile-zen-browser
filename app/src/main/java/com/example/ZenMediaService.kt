@@ -25,6 +25,7 @@ object ZenMediaBus {
     /** Explicit state commands avoid interpreting Android's Play and Pause as the same toggle. */
     @Volatile var onSetPlaying: ((Boolean) -> Unit)? = null
     @Volatile var onPlayPause: (() -> Unit)? = null
+    @Volatile var onToggleMute: (() -> Unit)? = null
     @Volatile var onStop: (() -> Unit)? = null
     /** Seek to an absolute position (ms) / by a relative offset (ms) in the playing page media. */
     @Volatile var onSeekTo: ((Long) -> Unit)? = null
@@ -153,7 +154,7 @@ class ZenMediaService : Service() {
         if (artwork != null) {
             lastArtwork = artwork
         }
-        // Always (re)arm the wake lock first: this must not be skipped by the dedupe below.
+        // Always (re)arm the wake lock first: GeckoView owns Android audio focus natively.
         if (playing) {
             wakeLock?.acquire(WAKE_LOCK_MS)
             handler.removeCallbacks(renewWakeLock)
@@ -347,6 +348,7 @@ class ZenMediaService : Service() {
     override fun onDestroy() {
         instance = null
         handler.removeCallbacks(renewWakeLock)
+        handler.removeCallbacks(pollProgressRunnable)
         if (wakeLock?.isHeld == true) wakeLock?.release()
         session?.isActive = false
         session?.release()

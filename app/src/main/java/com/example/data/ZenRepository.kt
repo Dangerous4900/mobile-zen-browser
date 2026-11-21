@@ -52,8 +52,8 @@ class ZenRepository(
         val SIDEBAR_CUSTOM_COLOR_HEX = longPreferencesKey("sidebar_custom_color_hex")
         val BORDER_GLOW = booleanPreferencesKey("border_glow")
         val SECTION_ORDER = stringPreferencesKey("section_order")
-        val ENABLED_SIDEBAR_TOOLS = stringPreferencesKey("enabled_sidebar_tools_v2")
-        val ENABLED_TOP_TOOLBAR_TOOLS = stringPreferencesKey("enabled_top_toolbar_tools_v2")
+        val ENABLED_SIDEBAR_TOOLS = stringPreferencesKey("enabled_sidebar_tools_v3")
+        val ENABLED_TOP_TOOLBAR_TOOLS = stringPreferencesKey("enabled_top_toolbar_tools_v3")
         val SHOW_SIDEBAR_NAV_CONTROLS = booleanPreferencesKey("show_sidebar_nav_controls")
         val HIDE_EDIT_PEN_ICON = booleanPreferencesKey("hide_edit_pen_icon")
         val BACK_SWIPE_SIDEBAR_MODE = stringPreferencesKey("back_swipe_sidebar_mode")
@@ -69,7 +69,9 @@ class ZenRepository(
         val BACKGROUND_PLAY_ENABLED = booleanPreferencesKey("background_play_enabled")
         val PLAY_IN_WINDOW_PIP_ENABLED = booleanPreferencesKey("play_in_window_pip_enabled")
         val BIOMETRIC_LOCK_ENABLED = booleanPreferencesKey("biometric_lock_enabled")
+        val BIOMETRIC_GRACE_PERIOD = stringPreferencesKey("biometric_grace_period")
         val DATA_SAVER_ENABLED = booleanPreferencesKey("data_saver_enabled")
+        val PINNED_EXTENSION_IDS = stringPreferencesKey("pinned_extension_ids")
         val SIDEBAR_UI_SCALE = floatPreferencesKey("sidebar_ui_scale")
 
         val TAB_SWIPE_RIGHT = stringPreferencesKey("tab_swipe_right")
@@ -170,7 +172,7 @@ class ZenRepository(
             hideEditPenIcon = prefs[Keys.HIDE_EDIT_PEN_ICON] ?: false,
             backSwipeSidebarMode = prefs[Keys.BACK_SWIPE_SIDEBAR_MODE]?.let {
                 runCatching { BackSwipeSidebarMode.valueOf(it) }.getOrNull()
-            } ?: BackSwipeSidebarMode.GO_BACK_THEN_SIDEBAR,
+            } ?: BackSwipeSidebarMode.LEFT_SIDEBAR_RIGHT_BACK,
             sidebarUiScale = (prefs[Keys.SIDEBAR_UI_SCALE] ?: 1.0f).coerceIn(0.75f, 1.35f),
             glassBlurIntensity = prefs[Keys.GLASS_INTENSITY] ?: 0.50f,
             sidebarOpacity = prefs[Keys.SIDEBAR_OPACITY] ?: 0.85f,
@@ -226,12 +228,16 @@ class ZenRepository(
             fakeSearchHeadline = prefs[Keys.FAKE_SEARCH_HEADLINE] ?: "",
             fakeSearchSnippet = prefs[Keys.FAKE_SEARCH_SNIPPET] ?: "",
             backgroundPlayEnabled = prefs[Keys.BACKGROUND_PLAY_ENABLED] ?: true,
-            playInWindowPipEnabled = prefs[Keys.PLAY_IN_WINDOW_PIP_ENABLED] ?: false,
+            playInWindowPipEnabled = prefs[Keys.PLAY_IN_WINDOW_PIP_ENABLED] ?: true,
             biometricLockEnabled = prefs[Keys.BIOMETRIC_LOCK_ENABLED] ?: false,
+            biometricGracePeriod = prefs[Keys.BIOMETRIC_GRACE_PERIOD]?.let {
+                BiometricGracePeriod.fromId(it)
+            } ?: BiometricGracePeriod.IMMEDIATE,
             dataSaverEnabled = prefs[Keys.DATA_SAVER_ENABLED] ?: false,
             sectionOrder = parsedOrder ?: SidebarConfig().sectionOrder,
             enabledSidebarTools = parsedTools ?: SidebarConfig().enabledSidebarTools,
-            enabledTopToolbarTools = parsedTopTools ?: SidebarConfig().enabledTopToolbarTools
+            enabledTopToolbarTools = parsedTopTools ?: SidebarConfig().enabledTopToolbarTools,
+            pinnedExtensionIds = prefs[Keys.PINNED_EXTENSION_IDS]?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: setOf("ff_ublock_origin")
         )
     }
 
@@ -315,10 +321,12 @@ class ZenRepository(
             prefs[Keys.BACKGROUND_PLAY_ENABLED] = config.backgroundPlayEnabled
             prefs[Keys.PLAY_IN_WINDOW_PIP_ENABLED] = config.playInWindowPipEnabled
             prefs[Keys.BIOMETRIC_LOCK_ENABLED] = config.biometricLockEnabled
+            prefs[Keys.BIOMETRIC_GRACE_PERIOD] = config.biometricGracePeriod.id
             prefs[Keys.DATA_SAVER_ENABLED] = config.dataSaverEnabled
             prefs[Keys.SECTION_ORDER] = config.sectionOrder.joinToString(",") { it.id }
             prefs[Keys.ENABLED_SIDEBAR_TOOLS] = config.enabledSidebarTools.joinToString(",") { it.id }
             prefs[Keys.ENABLED_TOP_TOOLBAR_TOOLS] = config.enabledTopToolbarTools.joinToString(",") { it.id }
+            prefs[Keys.PINNED_EXTENSION_IDS] = config.pinnedExtensionIds.joinToString(",")
         }
     }
 
@@ -1102,6 +1110,9 @@ class ZenRepository(
 
     suspend fun clearAllHistory() =
         zenDao.clearAllHistory()
+
+    suspend fun deleteHistorySince(sinceTimestamp: Long) =
+        zenDao.deleteHistorySince(sinceTimestamp)
 
     suspend fun insertDownloadItem(item: DownloadItemEntity) =
         zenDao.insertDownloadItem(item)

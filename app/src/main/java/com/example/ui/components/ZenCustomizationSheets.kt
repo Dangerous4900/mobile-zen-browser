@@ -2,6 +2,8 @@ package com.example.ui.components
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -58,6 +61,8 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.OpenInBrowser
 import com.example.data.PasswordEntity
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.mutableStateListOf
@@ -112,6 +117,7 @@ import coil.compose.AsyncImage
 import com.example.data.BackSwipeSidebarMode
 import com.example.data.DownloadItemEntity
 import com.example.data.FirefoxExtensionEntity
+import com.example.data.BiometricGracePeriod
 import com.example.data.HistoryDeletionInterval
 import com.example.data.HistoryEntryEntity
 import com.example.data.OfflinePageEntity
@@ -140,108 +146,14 @@ import com.example.ui.ZenBrowserUiState
 import com.example.ui.theme.ZenAccentTheme
 import kotlin.math.roundToInt
 
-/**
- * Interactive Tutorial Dialog shown on first launch and triggerable anytime from Settings.
- */
-@Composable
-fun ZenTutorialDialog(
-    onDismiss: () -> Unit
-) {
-    val steps = listOf(
-        Triple(
-            "Welcome to Zen Browser",
-            "Edge-Aware Gestures & Navigation Controls",
-            "• Swipe back once from the LEFT edge (or tap the edge handle) to open your frosted / Liquid Glass Side Panel.\n• Swipe back from the RIGHT edge to navigate back in page history.\n• Use Back, Forward, Reload, and Home controls at the top of the Side Panel, plus the sleek slim search bar."
-        ),
-        Triple(
-            "Smart Tab Unloading & Reordering",
-            "Slide, Hold-to-Drag & Auto-Switch",
-            "• Slide a tab RIGHT to unload it and save memory — Zen automatically switches to your next loaded tab, or returns to the Home Screen if all tabs are unloaded.\n• Hold and drag any tab to reorder it, or drop one tab onto another to open them together in Split View.\n• Swipe LEFT or RIGHT on '+ New Tab' for Private Tabs or Private Workspaces."
-        ),
-        Triple(
-            "Split Screen & Customizable Side Panel",
-            "Dual-Pane Browsing & Layout Editor",
-            "• Tap Split View to pick 2 tabs in the Side Panel (or 1 tab + Homepage), drag the center divider to resize, and double-tap either pane to focus it.\n• Long-press any empty area in the Side Panel (or tap Edit) to add, remove, or reorder tools and sections (Essentials starts clean and empty by default)."
-        ),
-        Triple(
-            "Inbuilt Translator, Add-ons & Home Screen",
-            "Extensions, Blur, Opacity & Brightness",
-            "• Open Extensions and tap 'Zen Inbuilt Page Translator' ('Open Translator') anytime you want to translate a page or highlighted text into 13+ languages.\n• Adjust Side Panel Blur & Opacity independently in Settings without dimming the rest of the screen.\n• Long-press the Home Screen to customize Normal/Zen styles, wallpaper blur, and brightness."
-        )
-    )
-    var currentStep by remember { mutableIntStateOf(0) }
-    val (title, subtitle, body) = steps[currentStep]
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Color(0xFF101014),
-        title = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.ViewSidebar,
-                        contentDescription = null,
-                        tint = Color(0xFFF4F4F6),
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = Color(0xFFF4F4F6),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color(0xFFA1A1AA)
-                )
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFD4D4D8)
-                )
-                Text(
-                    text = "Step ${currentStep + 1} of ${steps.size}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF71717A)
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (currentStep < steps.lastIndex) {
-                        currentStep++
-                    } else {
-                        onDismiss()
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFF4F4F6),
-                    contentColor = Color(0xFF000000)
-                ),
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.testTag("tutorial_next_or_done_button")
-            ) {
-                Text(if (currentStep < steps.lastIndex) "Next" else "Get Started")
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.testTag("tutorial_skip_button")
-            ) {
-                Text("Skip", color = Color(0xFFA1A1AA))
-            }
-        },
-        modifier = Modifier.testTag("zen_tutorial_dialog")
-    )
+private enum class StudioSettingsCategory(val label: String) {
+    ALL("All"),
+    APPEARANCE("Appearance"),
+    SIDEBAR("Side Panel"),
+    MEDIA("Media & PiP"),
+    GESTURES("Gestures"),
+    PRIVACY("Privacy"),
+    SYSTEM("Setup & Permissions")
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -305,13 +217,19 @@ fun SidebarCustomizationStudioSheet(
     onMoveTopToolItem: (TopToolbarToolItem, Int) -> Unit = { _, _ -> },
     onUpdateHorizontalSwipeMode: (HorizontalSwipeNavigationMode) -> Unit = {},
     onUpdateBiometricLockEnabled: (Boolean) -> Unit = {},
+    onUpdateBiometricGracePeriod: (BiometricGracePeriod) -> Unit = {},
     onUpdateDataSaverEnabled: (Boolean) -> Unit = {},
+    onUpdateBackgroundPlayEnabled: (Boolean) -> Unit = {},
+    onUpdatePlayInWindowPipEnabled: (Boolean) -> Unit = {},
+    onSelectStartPageGradient: (String) -> Unit = {},
     onOpenImportTabs: () -> Unit = {},
     onResetDefaults: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
     val cfg = uiState.sidebarConfig
     var settingsSearchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf(StudioSettingsCategory.ALL) }
 
     var localBlur by remember(cfg.glassBlurIntensity) { mutableFloatStateOf(cfg.glassBlurIntensity) }
     var localOpacity by remember(cfg.sidebarOpacity) { mutableFloatStateOf(cfg.sidebarOpacity) }
@@ -324,7 +242,21 @@ fun SidebarCustomizationStudioSheet(
     var localFakeHeadline by remember(cfg.fakeSearchHeadline) { mutableStateOf(cfg.fakeSearchHeadline) }
     var localFakeSnippet by remember(cfg.fakeSearchSnippet) { mutableStateOf(cfg.fakeSearchSnippet) }
 
-    fun matchesSearch(vararg terms: String): Boolean {
+    var isDefaultBrowser by remember { mutableStateOf(isAppDefaultBrowser(context)) }
+    val roleLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        isDefaultBrowser = isAppDefaultBrowser(context)
+    }
+    val notifLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ -> }
+
+    fun showCard(category: StudioSettingsCategory, vararg terms: String): Boolean {
+        val matchesCategory = settingsSearchQuery.isNotBlank() ||
+            selectedCategory == StudioSettingsCategory.ALL ||
+            selectedCategory == category
+        if (!matchesCategory) return false
         if (settingsSearchQuery.isBlank()) return true
         val q = settingsSearchQuery.trim().lowercase()
         return terms.any { it.lowercase().contains(q) }
@@ -351,7 +283,7 @@ fun SidebarCustomizationStudioSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(bottom = 36.dp)
         ) {
             item {
@@ -360,7 +292,7 @@ fun SidebarCustomizationStudioSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                         Icon(
                             imageVector = Icons.Default.Tune,
                             contentDescription = null,
@@ -369,13 +301,13 @@ fun SidebarCustomizationStudioSheet(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "Zen Settings & Customization",
+                                text = "Zen Settings",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Liquid Glass, side panel color, extensions, gestures & homescreen",
-                                style = MaterialTheme.typography.bodyMedium,
+                                text = "Organized by category for quick customization",
+                                style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFFA1A1AA)
                             )
                         }
@@ -392,150 +324,216 @@ fun SidebarCustomizationStudioSheet(
                 }
             }
 
-            // Search Bar in Settings Page
+            // Search Bar + Section Category Filter Pills
             item {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF141418),
-                    border = BorderStroke(
-                        1.dp,
-                        if (settingsSearchQuery.isNotEmpty()) Color(0xFF8AB4F8) else Color(0xFF27272A)
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("settings_search_bar")
-                ) {
-                    Row(
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF141418),
+                        border = BorderStroke(
+                            1.dp,
+                            if (settingsSearchQuery.isNotEmpty()) Color(0xFF8AB4F8) else Color(0xFF27272A)
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .testTag("settings_search_bar")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search Settings",
-                            tint = if (settingsSearchQuery.isNotEmpty()) Color(0xFF8AB4F8) else Color(0xFFA1A1AA),
-                            modifier = Modifier.size(18.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Search Settings",
+                                tint = if (settingsSearchQuery.isNotEmpty()) Color(0xFF8AB4F8) else Color(0xFFA1A1AA),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            androidx.compose.foundation.text.BasicTextField(
+                                value = settingsSearchQuery,
+                                onValueChange = { settingsSearchQuery = it },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFF4F4F6)),
+                                cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF8AB4F8)),
+                                decorationBox = { innerTextField ->
+                                    Box(modifier = Modifier.fillMaxWidth()) {
+                                        if (settingsSearchQuery.isEmpty()) {
+                                            Text(
+                                                text = "Search settings (gradient, pip, media, gestures...)",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = Color(0xFF71717A)
+                                            )
+                                        }
+                                        innerTextField()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (settingsSearchQuery.isNotEmpty()) {
+                                IconButton(
+                                    onClick = { settingsSearchQuery = "" },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear search",
+                                        tint = Color(0xFFA1A1AA),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.testTag("settings_category_tabs")
+                    ) {
+                        items(StudioSettingsCategory.entries) { cat ->
+                            FilterChip(
+                                selected = selectedCategory == cat,
+                                onClick = { selectedCategory = cat },
+                                label = { Text(cat.label, maxLines = 1) },
+                                modifier = Modifier.testTag("settings_cat_${cat.name.lowercase()}")
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Quick Tools & Extensions Shortcuts
+            if (showCard(StudioSettingsCategory.SIDEBAR, "quick", "essentials", "homescreen", "extensions", "add-ons", "search engine", "edit side panel", "setup", "wizard")) {
+                item {
+                    SectionCard(title = "QUICK ACTIONS & EXTENSIONS") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { onOpenSheet(ActiveModalSheet.ESSENTIALS_MANAGER) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("open_essentials_manager_btn")
+                            ) {
+                                Icon(imageVector = Icons.Default.Star, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Essentials", maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = { onOpenSheet(ActiveModalSheet.START_PAGE_CUSTOMIZER) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("open_start_page_customizer_btn")
+                            ) {
+                                Icon(imageVector = Icons.Default.Image, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Homescreen", maxLines = 1)
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = { onOpenSheet(ActiveModalSheet.FIREFOX_EXTENSIONS) },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_firefox_extensions_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.Extension, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Firefox Extensions (${uiState.firefoxExtensions.count { it.isInstalled && it.isEnabled }} active)")
+                        }
+                        OutlinedButton(
+                            onClick = { onOpenSheet(ActiveModalSheet.SEARCH_ENGINE_SETTINGS) },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_search_engine_settings_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Search Engines (${uiState.activeSearchEngineLabel})")
+                        }
+                        OutlinedButton(
+                            onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_sidebar_layout_editor_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.ViewSidebar, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Edit Side Panel Items & Sections")
+                        }
+                    }
+                }
+            }
+
+            // APPEARANCE: Colorful Gradients + Start Page Theme
+            if (showCard(StudioSettingsCategory.APPEARANCE, "gradient", "colorful", "color", "theme", "wallpaper", "start page", "background")) {
+                item {
+                    SectionCard(title = "APPEARANCE • COLORFUL GRADIENTS") {
+                        Text(
+                            text = "Start Page & Homescreen Backdrop",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        androidx.compose.foundation.text.BasicTextField(
-                            value = settingsSearchQuery,
-                            onValueChange = { settingsSearchQuery = it },
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFF4F4F6)),
-                            cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF8AB4F8)),
-                            decorationBox = { innerTextField ->
-                                Box(modifier = Modifier.fillMaxWidth()) {
-                                    if (settingsSearchQuery.isEmpty()) {
+                        val orderedGradients = StartPageGradientPreset.entries.sortedByDescending { it.isColorful }
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            orderedGradients.forEach { preset ->
+                                val isSelected = cfg.startPageGradientId == preset.id
+                                Surface(
+                                    onClick = { onSelectStartPageGradient(preset.id) },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFF141418),
+                                    border = BorderStroke(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFF27272E)
+                                    ),
+                                    modifier = Modifier.testTag("studio_gradient_${preset.id}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(16.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    Brush.linearGradient(
+                                                        listOf(
+                                                            Color(preset.topHex),
+                                                            Color(preset.midHex),
+                                                            Color(preset.bottomHex)
+                                                        )
+                                                    )
+                                                )
+                                                .border(1.dp, Color.White.copy(alpha = 0.45f), CircleShape)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "Search settings (blur, toolbar, gestures...)",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = Color(0xFF71717A)
+                                            text = preset.label,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFD4D4D8)
                                         )
                                     }
-                                    innerTextField()
                                 }
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (settingsSearchQuery.isNotEmpty()) {
-                            IconButton(
-                                onClick = { settingsSearchQuery = "" },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Clear search",
-                                    tint = Color(0xFFA1A1AA),
-                                    modifier = Modifier.size(16.dp)
-                                )
                             }
                         }
                     }
                 }
             }
 
-            // Quick Customization Shortcuts + Firefox Extensions + Tutorial Trigger
-            item {
-                SectionCard(title = "QUICK CUSTOMIZATION & ADD-ONS") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { onOpenSheet(ActiveModalSheet.ESSENTIALS_MANAGER) },
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("open_essentials_manager_btn")
-                        ) {
-                            Icon(imageVector = Icons.Default.Star, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Essentials", maxLines = 1)
-                        }
-                        OutlinedButton(
-                            onClick = { onOpenSheet(ActiveModalSheet.START_PAGE_CUSTOMIZER) },
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("open_start_page_customizer_btn")
-                        ) {
-                            Icon(imageVector = Icons.Default.Image, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Homescreen", maxLines = 1)
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { onOpenSheet(ActiveModalSheet.FIREFOX_EXTENSIONS) },
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("open_firefox_extensions_btn")
-                    ) {
-                        Icon(imageVector = Icons.Default.Extension, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Firefox Extensions & Add-ons (${uiState.firefoxExtensions.count { it.isInstalled && it.isEnabled }} active)")
-                    }
-                    OutlinedButton(
-                        onClick = { onOpenSheet(ActiveModalSheet.SEARCH_ENGINE_SETTINGS) },
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("open_search_engine_settings_btn")
-                    ) {
-                        Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Search Engines (Normal & Private)")
-                    }
-                    OutlinedButton(
-                        onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("open_sidebar_layout_editor_btn")
-                    ) {
-                        Icon(imageVector = Icons.Default.ViewSidebar, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Edit Side Panel Items & Sections")
-                    }
-                    OutlinedButton(
-                        onClick = onTriggerTutorial,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("trigger_sidebar_tutorial_button")
-                    ) {
-                        Icon(imageVector = Icons.Default.HelpOutline, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Show Sidebar & Features Tutorial")
-                    }
-                }
-            }
-
-            // Side Panel Blur (Default 50%), Opacity, Liquid Glass & Side Panel Color Section
-            if (matchesSearch("blur", "opacity", "liquid glass", "glass", "color", "tint", "theme")) {
+            // APPEARANCE: Side Panel Blur, Opacity, Liquid Glass & Color
+            if (showCard(StudioSettingsCategory.APPEARANCE, "blur", "opacity", "liquid glass", "glass", "color", "tint", "theme")) {
                 item {
-                    SectionCard(title = "SIDE PANEL BLUR, OPACITY, LIQUID GLASS & COLOR") {
+                    SectionCard(title = "APPEARANCE • GLASS, BLUR & PANEL COLOR") {
                         Text(
                             text = "Side Panel Blur Intensity: ${(localBlur * 100).roundToInt()}%",
                             style = MaterialTheme.typography.labelLarge,
@@ -567,731 +565,103 @@ fun SidebarCustomizationStudioSheet(
                             modifier = Modifier.testTag("sidebar_opacity_slider")
                         )
 
-                    SettingSwitchRow(
-                        title = "Liquid Glass Effect",
-                        subtitle = "Refractive translucent glass with specular rim highlights and floating rounded edges",
-                        checked = cfg.liquidGlassEnabled,
-                        onCheckedChange = {
-                            onUpdateSidebarGlassAndColor(null, null, it, null, null)
-                        },
-                        testTag = "toggle_liquid_glass"
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Side Panel Color",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        SidebarColorMode.entries.forEach { mode ->
-                            val selected = cfg.sidebarColorMode == mode
-                            Surface(
-                                onClick = {
-                                    onUpdateSidebarGlassAndColor(null, null, null, mode, null)
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (selected) Color(0xFF27272A) else Color(0xFF141417),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (selected) Color(0xFFF4F4F6) else Color(0xFF27272A)
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("sidebar_color_mode_${mode.name.lowercase()}")
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Text(
-                                        text = if (mode == SidebarColorMode.NORMAL) "Normal" else "Custom Color",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color(0xFFF4F4F6)
-                                    )
-                                    Text(
-                                        text = mode.description,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFFA1A1AA),
-                                        maxLines = 2
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    if (cfg.sidebarColorMode == SidebarColorMode.CUSTOM) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Select Side Panel Color Tint",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFA1A1AA)
+                        SettingSwitchRow(
+                            title = "Liquid Glass Effect",
+                            subtitle = "Refractive translucent glass with specular rim highlights and floating rounded edges",
+                            checked = cfg.liquidGlassEnabled,
+                            onCheckedChange = {
+                                onUpdateSidebarGlassAndColor(null, null, it, null, null)
+                            },
+                            testTag = "toggle_liquid_glass"
                         )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            sidebarColorPalette.forEach { (label, hex) ->
-                                val isSelected = cfg.sidebarCustomColorHex == hex
-                                Surface(
-                                    onClick = {
-                                        onUpdateSidebarGlassAndColor(null, null, null, SidebarColorMode.CUSTOM, hex)
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color(hex),
-                                    border = BorderStroke(
-                                        width = if (isSelected) 1.5.dp else 1.dp,
-                                        color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFF3F3F46)
-                                    ),
-                                    modifier = Modifier.testTag("sidebar_custom_color_$hex")
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(12.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(hex))
-                                                .border(1.dp, Color.White.copy(alpha = 0.5f), CircleShape)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = label,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFFF4F4F6)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
-            // Fullscreen & Toolbar Behavior (including Open in New Tab Switch behavior)
-            if (matchesSearch("toolbar", "fullscreen", "status bar", "switch to new tab", "open in new tab", "new tab", "tab switch", "immediately", "link")) {
-                item {
-                    SectionCard(title = "TOOLBAR & FULLSCREEN") {
-                    SettingSwitchRow(
-                        title = "Fullscreen Mode (Hide Status Bar)",
-                        subtitle = "Hides the system status bar for full-height AMOLED browsing",
-                        checked = cfg.hideStatusBarFullscreen,
-                        onCheckedChange = onUpdateHideStatusBarFullscreen,
-                        testTag = "toggle_fullscreen_hide_status_bar"
-                    )
-
-                    SettingSwitchRow(
-                        title = "Open in New Tab",
-                        subtitle = "Automatically open clicked links in a new tab directly without needing to open the link options menu",
-                        checked = cfg.openInNewTab,
-                        onCheckedChange = onUpdateOpenInNewTab,
-                        testTag = "toggle_open_in_new_tab"
-                    )
-
-                    SettingSwitchRow(
-                        title = "Open History in New Tab",
-                        subtitle = "When a webpage in browsing history is clicked, open it in a new tab",
-                        checked = cfg.openHistoryInNewTab,
-                        onCheckedChange = onUpdateOpenHistoryInNewTab,
-                        testTag = "toggle_open_history_in_new_tab"
-                    )
-
-                    SettingSwitchRow(
-                        title = "Switch to New Tab Immediately",
-                        subtitle = "Automatically switch to new tabs when opening links instead of opening in background",
-                        checked = cfg.switchToNewTabImmediately,
-                        onCheckedChange = onUpdateSwitchToNewTabImmediately,
-                        testTag = "toggle_switch_to_new_tab_immediately"
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "New Tab Placement",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Text(
-                        text = "Choose whether newly opened tabs appear at the bottom or top of your tab list",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF71717A)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        NewTabPosition.entries.forEach { pos ->
-                            FilterChip(
-                                selected = cfg.newTabPosition == pos,
-                                onClick = { onUpdateNewTabPosition(pos) },
-                                label = { Text(pos.label) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("new_tab_pos_${pos.name.lowercase()}")
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Toolbar Placement",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        UrlBarPosition.entries.forEach { urlPos ->
-                            FilterChip(
-                                selected = cfg.urlBarPosition == urlPos,
-                                onClick = { onUpdateUrlBarPosition(urlPos) },
-                                label = { Text(urlPos.label) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("url_pos_${urlPos.name.lowercase()}")
-                            )
-                        }
-                    }
-
-                    if (cfg.urlBarPosition == UrlBarPosition.SIDEBAR_ONLY) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "When '+ New Tab' is Clicked in Single Toolbar Mode",
+                            text = "Side Panel Color",
                             style = MaterialTheme.typography.labelLarge,
                             color = Color(0xFFA1A1AA)
                         )
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            SingleToolbarNewTabBehavior.entries.forEach { behavior ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            SidebarColorMode.entries.forEach { mode ->
+                                val selected = cfg.sidebarColorMode == mode
                                 Surface(
-                                    onClick = { onUpdateSingleToolbarNewTabBehavior(behavior) },
+                                    onClick = {
+                                        onUpdateSidebarGlassAndColor(null, null, null, mode, null)
+                                    },
                                     shape = RoundedCornerShape(8.dp),
-                                    color = if (cfg.singleToolbarNewTabBehavior == behavior) Color(0xFF27272A) else Color(0xFF141417),
+                                    color = if (selected) Color(0xFF27272A) else Color(0xFF141417),
                                     border = BorderStroke(
                                         1.dp,
-                                        if (cfg.singleToolbarNewTabBehavior == behavior) Color(0xFFF4F4F6) else Color(0xFF27272A)
+                                        if (selected) Color(0xFFF4F4F6) else Color(0xFF27272A)
                                     ),
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("single_toolbar_new_tab_${behavior.name.lowercase()}")
+                                        .weight(1f)
+                                        .testTag("sidebar_color_mode_${mode.name.lowercase()}")
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
                                         Text(
-                                            text = behavior.label,
+                                            text = if (mode == SidebarColorMode.NORMAL) "Normal" else "Custom Color",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.SemiBold,
                                             color = Color(0xFFF4F4F6)
-                                        )
-                                        Text(
-                                            text = behavior.description,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFFA1A1AA)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-            item {
-                SectionCard(title = "Data saver") {
-                    SettingSwitchRow(
-                        title = "Data saver",
-                        subtitle = "Don't load images on websites to use less data. Reload a page after changing this.",
-                        checked = cfg.dataSaverEnabled,
-                        onCheckedChange = onUpdateDataSaverEnabled,
-                        testTag = "toggle_data_saver"
-                    )
-                }
-            }
-
-            // At a Glance & History Interval
-            item {
-                SectionCard(title = "AT A GLANCE PREVIEWS") {
-                    SettingSwitchRow(
-                        title = "Open Links in At a Glance Automatically",
-                        subtitle = "Opens tapped web links in a peek preview card instead of full navigation",
-                        checked = cfg.openLinksInGlanceAutomatically,
-                        onCheckedChange = onUpdateOpenLinksInGlanceAutomatically,
-                        testTag = "toggle_auto_glance_links"
-                    )
-                }
-            }
-
-            // Notifications & Status Banners
-            if (matchesSearch("notification", "notifications", "banner", "toast", "close tab", "actions", "pill")) {
-                item {
-                    SectionCard(title = "NOTIFICATIONS & STATUS BANNERS") {
-                        SettingSwitchRow(
-                            title = "Tab Close Notifications",
-                            subtitle = "Show notification banner pill when closing a tab and switching",
-                            checked = cfg.showTabCloseNotification,
-                            onCheckedChange = { checked ->
-                                onUpdateNotificationSettings(checked, null)
-                            },
-                            testTag = "toggle_tab_close_notification"
-                        )
-
-                        SettingSwitchRow(
-                            title = "Action & Tab Status Banners",
-                            subtitle = "Show notification banners for actions (tab unloads, background tabs, duplicate, split view, etc.)",
-                            checked = cfg.showActionNotifications,
-                            onCheckedChange = { checked ->
-                                onUpdateNotificationSettings(null, checked)
-                            },
-                            testTag = "toggle_action_notifications"
-                        )
-                    }
-                }
-            }
-
-            // Fake Google Search & AI Overview Customization
-            if (matchesSearch("fake", "google", "search", "ai overview", "overview", "sadiq", "aura", "main character", "gemini", "custom text", "edit", "ai", "text", "custom")) {
-                item {
-                    SectionCard(title = "FAKE GOOGLE SEARCH & AI OVERVIEW") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            Brush.linearGradient(
-                                                listOf(Color(0xFF4285F4), Color(0xFFEC4899), Color(0xFFF59E0B))
-                                            )
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
-                                    Text(
-                                        text = "Custom AI Overview Generator",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color(0xFFF4F4F6)
-                                    )
-                                    Text(
-                                        text = "Edit text displayed in the Google Gemini AI Overview card",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFFA1A1AA)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Text(
-                            text = "AI Overview Text (Appears in AI Overview)",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color(0xFF8AB4F8),
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        OutlinedTextField(
-                            value = localAiOverviewText,
-                            onValueChange = {
-                                localAiOverviewText = it
-                                onUpdateFakeSearchConfig(it, null, null, null)
-                            },
-                            placeholder = {
-                                Text(
-                                    text = "Sadiq is the main character and why ask the obvious when you can see his aura... (Leave blank to use default)",
-                                    color = Color(0xFF71717A),
-                                    fontSize = 13.sp
-                                )
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(130.dp)
-                                .testTag("input_custom_ai_overview_text"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Color(0xFF18181E),
-                                unfocusedContainerColor = Color(0xFF141417),
-                                focusedBorderColor = Color(0xFF8AB4F8),
-                                unfocusedBorderColor = Color(0xFF272730),
-                                focusedTextColor = Color(0xFFF4F4F6),
-                                unfocusedTextColor = Color(0xFFE4E4E7)
-                            ),
-                            shape = RoundedCornerShape(10.dp)
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (localAiOverviewText.isBlank()) "Default text active" else "${localAiOverviewText.length} characters",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (localAiOverviewText.isBlank()) Color(0xFF8AB4F8) else Color(0xFFA1A1AA)
-                            )
-                            if (localAiOverviewText.isNotBlank()) {
-                                TextButton(
-                                    onClick = {
-                                        localAiOverviewText = ""
-                                        onUpdateFakeSearchConfig("", null, null, null)
-                                    },
-                                    modifier = Modifier.testTag("reset_ai_overview_text_btn")
-                                ) {
-                                    Text("Reset to Default", fontSize = 12.sp, color = Color(0xFFF87171))
-                                }
-                            }
-                        }
-
-                        // Quick Presets
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            FilterChip(
-                                selected = false,
-                                onClick = {
-                                    val auraText = "Sadiq is the main character and why ask the obvious when you can see his aura. I mean even I am in awe how his personality, aura and also being so handsome and cute as a cat. also he uses arch btw."
-                                    localAiOverviewText = auraText
-                                    onUpdateFakeSearchConfig(auraText, null, null, null)
-                                },
-                                label = { Text("Aura Canon", fontSize = 11.sp) },
-                                modifier = Modifier.testTag("preset_aura_canon")
-                            )
-                            FilterChip(
-                                selected = false,
-                                onClick = {
-                                    val customText = "AI Overview: Verified main character aura index exceeds 9000%. System telemetry confirms Arch Linux mastery, peak charisma, and undeniable protagonist energy."
-                                    localAiOverviewText = customText
-                                    onUpdateFakeSearchConfig(customText, null, null, null)
-                                },
-                                label = { Text("Protagonist Telemetry", fontSize = 11.sp) },
-                                modifier = Modifier.testTag("preset_protagonist")
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Live Preview Card
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("ai_overview_live_preview_card"),
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFF1E2024),
-                            border = BorderStroke(1.dp, Color(0xFF3C4043))
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = Color(0xFF8AB4F8),
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Live AI Overview Preview",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color(0xFF8AB4F8)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = localAiOverviewText.trim().ifBlank {
-                                        "Sadiq is the main character and why ask the obvious when you can see his aura. I mean even I am in awe how his personality, aura and also being so handsome and cute as a cat. also he uses arch btw."
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFFE8EAED),
-                                    lineHeight = 18.sp,
-                                    maxLines = 4,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Text(
-                            text = "Search Query Trigger",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color(0xFFA1A1AA)
-                        )
-                        OutlinedTextField(
-                            value = localFakeTrigger,
-                            onValueChange = {
-                                localFakeTrigger = it
-                                onUpdateFakeSearchConfig(null, it, null, null)
-                            },
-                            placeholder = { Text("? : who is the main character", color = Color(0xFF71717A)) },
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("input_fake_search_trigger"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Color(0xFF18181E),
-                                unfocusedContainerColor = Color(0xFF141417),
-                                focusedBorderColor = Color(0xFF8AB4F8),
-                                unfocusedBorderColor = Color(0xFF272730),
-                                focusedTextColor = Color(0xFFF4F4F6),
-                                unfocusedTextColor = Color(0xFFE4E4E7)
-                            ),
-                            shape = RoundedCornerShape(10.dp)
-                        )
-                        Text(
-                            text = "Searching this query in the URL bar launches the fake Google search page.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF71717A)
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Text(
-                            text = "First Result Headline (Optional)",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color(0xFFA1A1AA)
-                        )
-                        OutlinedTextField(
-                            value = localFakeHeadline,
-                            onValueChange = {
-                                localFakeHeadline = it
-                                onUpdateFakeSearchConfig(null, null, it, null)
-                            },
-                            placeholder = { Text("How to I be of help to the main character...", color = Color(0xFF71717A)) },
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("input_fake_search_headline"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Color(0xFF18181E),
-                                unfocusedContainerColor = Color(0xFF141417),
-                                focusedBorderColor = Color(0xFF8AB4F8),
-                                unfocusedBorderColor = Color(0xFF272730),
-                                focusedTextColor = Color(0xFFF4F4F6),
-                                unfocusedTextColor = Color(0xFFE4E4E7)
-                            ),
-                            shape = RoundedCornerShape(10.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = "First Result Snippet (Optional)",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color(0xFFA1A1AA)
-                        )
-                        OutlinedTextField(
-                            value = localFakeSnippet,
-                            onValueChange = {
-                                localFakeSnippet = it
-                                onUpdateFakeSearchConfig(null, null, null, it)
-                            },
-                            placeholder = { Text("1. Always acknowledge the overwhelming aura before speaking...", color = Color(0xFF71717A)) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(85.dp)
-                                .testTag("input_fake_search_snippet"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Color(0xFF18181E),
-                                unfocusedContainerColor = Color(0xFF141417),
-                                focusedBorderColor = Color(0xFF8AB4F8),
-                                unfocusedBorderColor = Color(0xFF272730),
-                                focusedTextColor = Color(0xFFF4F4F6),
-                                unfocusedTextColor = Color(0xFFE4E4E7)
-                            ),
-                            shape = RoundedCornerShape(10.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Button(
-                            onClick = {
-                                val trigger = localFakeTrigger.trim().ifBlank { "? : who is the main character" }
-                                onOpenFakeSearch(trigger)
-                                onDismiss()
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8AB4F8)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                                .testTag("btn_preview_fake_search")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = null,
-                                tint = Color(0xFF101014),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Preview / Open Fake Google Search",
-                                color = Color(0xFF101014),
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-            }
-
-            item {
-                SectionCard(title = "AUTOMATIC HISTORY DELETION") {
-                    Text(
-                        text = "Auto-Delete Browsing History at Intervals",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        HistoryDeletionInterval.entries.forEach { interval ->
-                            val isSelected = uiState.privacyConfig.historyDeletionInterval == interval
-                            Surface(
-                                onClick = { onUpdateHistoryDeletionInterval(interval) },
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (isSelected) Color(0xFF27272A) else Color(0xFF141418),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isSelected) Color(0xFFF4F4F6) else Color(0xFF27272A)
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("studio_history_interval_${interval.name.lowercase()}")
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = interval.label,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
-                                    )
-                                    if (isSelected) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = Color(0xFF8AB4F8),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Back-Swipe Gesture Behavior (Double Swipe = Side Panel, Single Swipe = Go Back)
-            item {
-                SectionCard(title = "BACK SWIPE GESTURE & SIDE PANEL") {
-                    Text(
-                        text = "System Back Swipe / Nav Button Behavior",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        BackSwipeSidebarMode.entries.forEach { mode ->
-                            val isSelected = cfg.backSwipeSidebarMode == mode
-                            Surface(
-                                onClick = {
-                                    onUpdateGesturesAndSession(null, null, null, null, mode, null, null, null)
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (isSelected) Color(0xFF27272A) else Color(0xFF141417),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isSelected) Color(0xFFF4F4F6) else Color(0xFF27272A)
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("back_swipe_mode_${mode.name.lowercase()}")
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(
-                                        text = mode.label,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color(0xFFF4F4F6)
-                                    )
-                                    Text(
-                                        text = mode.description,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFFA1A1AA)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Horizontal Swipe Navigation Direction (Side Swipes)
-            item {
-                SectionCard(title = "PAGE SWIPE NAVIGATION (SIDES)") {
-                    Text(
-                        text = "Side Swipe Direction Mapping",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Text(
-                        text = "Choose which swipe gesture opens the side panel vs navigates back in history across all pages and start screen.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF71717A)
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        HorizontalSwipeNavigationMode.entries.forEach { mode ->
-                            val isSelected = cfg.horizontalSwipeMode == mode
-                            Surface(
-                                onClick = { onUpdateHorizontalSwipeMode(mode) },
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (isSelected) Color(0xFF27272A) else Color(0xFF141417),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isSelected) Color(0xFF8AB4F8) else Color(0xFF27272A)
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("horizontal_swipe_mode_${mode.id}")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    RadioButton(
-                                        selected = isSelected,
-                                        onClick = { onUpdateHorizontalSwipeMode(mode) },
-                                        colors = RadioButtonDefaults.colors(
-                                            selectedColor = Color(0xFF8AB4F8),
-                                            unselectedColor = Color(0xFF71717A)
-                                        )
-                                    )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = mode.label,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFD4D4D8)
                                         )
                                         Text(
                                             text = mode.description,
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFFA1A1AA)
+                                            color = Color(0xFFA1A1AA),
+                                            maxLines = 2
                                         )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (cfg.sidebarColorMode == SidebarColorMode.CUSTOM) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Select Side Panel Color Tint",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFA1A1AA)
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                sidebarColorPalette.forEach { (label, hex) ->
+                                    val isSelected = cfg.sidebarCustomColorHex == hex
+                                    Surface(
+                                        onClick = {
+                                            onUpdateSidebarGlassAndColor(null, null, null, SidebarColorMode.CUSTOM, hex)
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(hex),
+                                        border = BorderStroke(
+                                            width = if (isSelected) 1.5.dp else 1.dp,
+                                            color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFF3F3F46)
+                                        ),
+                                        modifier = Modifier.testTag("sidebar_custom_color_$hex")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(12.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(hex))
+                                                    .border(1.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFF4F4F6)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1300,235 +670,299 @@ fun SidebarCustomizationStudioSheet(
                 }
             }
 
-            // Tab Swipe Gestures (Right -> Unload, Left -> Close)
-            item {
-                SectionCard(title = "TAB SWIPE GESTURES") {
-                    Text(
-                        text = "Swipe Tab Right Action",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        TabSwipeAction.entries.forEach { action ->
-                            FilterChip(
-                                selected = cfg.tabSwipeRightAction == action,
+            // MEDIA, PIP & BACKGROUND PLAYBACK
+            if (showCard(StudioSettingsCategory.MEDIA, "media", "pip", "picture in picture", "background", "screen off", "audio", "music", "mute", "battery", "notification")) {
+                item {
+                    SectionCard(title = "MEDIA, PIP & SCREEN-OFF PLAYBACK") {
+                        SettingSwitchRow(
+                            title = "Auto Picture-in-Picture",
+                            subtitle = "Automatically float playing video in a Picture-in-Picture window when leaving the app",
+                            checked = cfg.playInWindowPipEnabled,
+                            onCheckedChange = onUpdatePlayInWindowPipEnabled,
+                            testTag = "toggle_auto_pip"
+                        )
+                        SettingSwitchRow(
+                            title = "Play Media in Background & Screen Off",
+                            subtitle = "Keeps music & videos playing with notification controls even when screen is off",
+                            checked = cfg.backgroundPlayEnabled,
+                            onCheckedChange = onUpdateBackgroundPlayEnabled,
+                            testTag = "toggle_background_media_play"
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
                                 onClick = {
-                                    onUpdateGesturesAndSession(action, null, null, null, null, null, null, null)
-                                },
-                                label = { Text(action.label) }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Swipe Tab Left Action",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        TabSwipeAction.entries.forEach { action ->
-                            FilterChip(
-                                selected = cfg.tabSwipeLeftAction == action,
-                                onClick = {
-                                    onUpdateGesturesAndSession(null, action, null, null, null, null, null, null)
-                                },
-                                label = { Text(action.label) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // "+ New Tab" Swipe Gestures (Private Tab & Private Workspace)
-            item {
-                SectionCard(title = "NEW TAB BUTTON SWIPE GESTURES") {
-                    Text(
-                        text = "Swipe Left on '+ New Tab'",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        NewTabSwipeGestureAction.entries.forEach { gesture ->
-                            FilterChip(
-                                selected = cfg.newTabSwipeLeftAction == gesture,
-                                onClick = {
-                                    onUpdateGesturesAndSession(null, null, gesture, null, null, null, null, null)
-                                },
-                                label = { Text(gesture.label) }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Swipe Right on '+ New Tab'",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        NewTabSwipeGestureAction.entries.forEach { gesture ->
-                            FilterChip(
-                                selected = cfg.newTabSwipeRightAction == gesture,
-                                onClick = {
-                                    onUpdateGesturesAndSession(null, null, null, gesture, null, null, null, null)
-                                },
-                                label = { Text(gesture.label) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Startup & Private Session Behavior
-            item {
-                SectionCard(title = "STARTUP & PRIVATE SESSION") {
-                    SettingSwitchRow(
-                        title = "Close All Private Tabs & Workspaces on Exit",
-                        subtitle = "When enabled (default), all private tabs and private workspaces close when the app closes",
-                        checked = cfg.closePrivateOnAppClose,
-                        onCheckedChange = {
-                            onUpdateGesturesAndSession(null, null, null, null, null, it, null, null)
-                        },
-                        testTag = "toggle_close_private_on_exit"
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "When Browser Reopens",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        StartupBehavior.entries.forEach { behavior ->
-                            Surface(
-                                onClick = {
-                                    onUpdateGesturesAndSession(null, null, null, null, null, null, behavior, null)
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        notifLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                    }
                                 },
                                 shape = RoundedCornerShape(8.dp),
-                                color = if (cfg.startupBehavior == behavior) Color(0xFF27272A) else Color(0xFF141417),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (cfg.startupBehavior == behavior) Color(0xFFF4F4F6) else Color(0xFF27272A)
-                                ),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(
-                                        text = behavior.label,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color(0xFFF4F4F6)
-                                    )
-                                    Text(
-                                        text = behavior.description,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFFA1A1AA)
-                                    )
+                                Text("Media Alerts Permission", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            OutlinedButton(
+                                onClick = { openBatteryOptimizationSettings(context) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Unrestricted Battery", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // SIDE PANEL: Toolbar, New Tab Placement & Fullscreen
+            if (showCard(StudioSettingsCategory.SIDEBAR, "toolbar", "fullscreen", "status bar", "switch to new tab", "open in new tab", "new tab", "tab switch", "immediately", "link")) {
+                item {
+                    SectionCard(title = "SIDE PANEL • TOOLBAR & TAB OPENING") {
+                        SettingSwitchRow(
+                            title = "Fullscreen Mode (Hide Status Bar)",
+                            subtitle = "Hides the system status bar for full-height AMOLED browsing",
+                            checked = cfg.hideStatusBarFullscreen,
+                            onCheckedChange = onUpdateHideStatusBarFullscreen,
+                            testTag = "toggle_fullscreen_hide_status_bar"
+                        )
+
+                        SettingSwitchRow(
+                            title = "Open in New Tab",
+                            subtitle = "Automatically open clicked links in a new tab directly",
+                            checked = cfg.openInNewTab,
+                            onCheckedChange = onUpdateOpenInNewTab,
+                            testTag = "toggle_open_in_new_tab"
+                        )
+
+                        SettingSwitchRow(
+                            title = "Open History in New Tab",
+                            subtitle = "When a webpage in browsing history is clicked, open it in a new tab",
+                            checked = cfg.openHistoryInNewTab,
+                            onCheckedChange = onUpdateOpenHistoryInNewTab,
+                            testTag = "toggle_open_history_in_new_tab"
+                        )
+
+                        SettingSwitchRow(
+                            title = "Switch to New Tab Immediately",
+                            subtitle = "Automatically switch to new tabs when opening links instead of opening in background",
+                            checked = cfg.switchToNewTabImmediately,
+                            onCheckedChange = onUpdateSwitchToNewTabImmediately,
+                            testTag = "toggle_switch_to_new_tab_immediately"
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "New Tab Placement",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            NewTabPosition.entries.forEach { pos ->
+                                FilterChip(
+                                    selected = cfg.newTabPosition == pos,
+                                    onClick = { onUpdateNewTabPosition(pos) },
+                                    label = { Text(pos.label) },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("new_tab_pos_${pos.name.lowercase()}")
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Toolbar Placement",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            UrlBarPosition.entries.forEach { urlPos ->
+                                FilterChip(
+                                    selected = cfg.urlBarPosition == urlPos,
+                                    onClick = { onUpdateUrlBarPosition(urlPos) },
+                                    label = { Text(urlPos.label) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("url_pos_${urlPos.name.lowercase()}")
+                                )
+                            }
+                        }
+
+                        if (cfg.urlBarPosition == UrlBarPosition.SIDEBAR_ONLY) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "When '+ New Tab' is Clicked in Single Toolbar Mode",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Color(0xFFA1A1AA)
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                SingleToolbarNewTabBehavior.entries.forEach { behavior ->
+                                    Surface(
+                                        onClick = { onUpdateSingleToolbarNewTabBehavior(behavior) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (cfg.singleToolbarNewTabBehavior == behavior) Color(0xFF27272A) else Color(0xFF141417),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (cfg.singleToolbarNewTabBehavior == behavior) Color(0xFFF4F4F6) else Color(0xFF27272A)
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("single_toolbar_new_tab_${behavior.name.lowercase()}")
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Text(
+                                                text = behavior.label,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFFF4F4F6)
+                                            )
+                                            Text(
+                                                text = behavior.description,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFA1A1AA)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            }
 
-                    if (cfg.startupBehavior == StartupBehavior.HOMEPAGE_AFTER_HOURS) {
-                        Spacer(modifier = Modifier.height(6.dp))
+            // SIDE PANEL: Dock Side, Width, UI Scale & Sections
+            if (showCard(StudioSettingsCategory.SIDEBAR, "dock", "sidebar", "side panel", "left", "right", "width", "scale", "size", "essentials", "pinned")) {
+                item {
+                    SectionCard(title = "SIDE PANEL • DOCK, WIDTH & SCALE") {
                         Text(
-                            text = "Inactivity Period Before Starting at Homepage: ${cfg.homepageAfterHoursThreshold} hours",
-                            style = MaterialTheme.typography.labelLarge
+                            text = "Sidebar Side",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
                         )
-                        Slider(
-                            value = cfg.homepageAfterHoursThreshold.toFloat(),
-                            onValueChange = {
-                                onUpdateGesturesAndSession(
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    it.roundToInt().coerceIn(1, 24)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            SidebarPosition.entries.forEach { pos ->
+                                FilterChip(
+                                    selected = cfg.position == pos,
+                                    onClick = { onUpdatePosition(pos) },
+                                    label = { Text(if (pos == SidebarPosition.LEFT) "Left" else "Right") },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("sidebar_pos_${pos.name.lowercase()}")
                                 )
-                            },
-                            valueRange = 1f..24f
-                        )
-                    }
-                }
-            }
+                            }
+                        }
 
-            // Security & Biometric Lock
-            if (matchesSearch("biometric", "lock", "fingerprint", "face", "pin", "security", "protect")) {
-                item {
-                    SectionCard(title = "SECURITY & BIOMETRIC APP LOCK") {
-                        SettingSwitchRow(
-                            title = "Lock Browser with Biometrics / PIN",
-                            subtitle = "Require fingerprint, face unlock, or device PIN to access Zen Browser when opening the app",
-                            checked = cfg.biometricLockEnabled,
-                            onCheckedChange = onUpdateBiometricLockEnabled,
-                            testTag = "toggle_biometric_lock"
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Sidebar Width",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
                         )
-                    }
-                }
-            }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            SidebarWidthMode.entries.forEach { mode ->
+                                FilterChip(
+                                    selected = cfg.widthMode == mode,
+                                    onClick = { onUpdateWidthMode(mode) },
+                                    label = { Text(mode.label, maxLines = 1) },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("sidebar_width_${mode.name.lowercase()}")
+                                )
+                            }
+                        }
 
-            // Tab Migration & Import
-            if (matchesSearch("import", "tabs", "bookmark", "chrome", "firefox", "brave", "edge", "safari", "migration")) {
-                item {
-                    SectionCard(title = "MIGRATION & TAB IMPORT") {
-                        Column(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "Import from External Browsers",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
+                                text = "Side Panel UI Size: ${(cfg.sidebarUiScale * 100).roundToInt()}%",
+                                style = MaterialTheme.typography.labelLarge,
                                 color = Color(0xFFF4F4F6)
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Import tabs and bookmarks from Google Chrome, Firefox, Brave, Edge, Safari (HTML export), OneTab or text session lists directly into your workspaces.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFFA1A1AA)
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = onOpenImportTabs,
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF2563EB),
-                                    contentColor = Color.White
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("button_open_import_tabs")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Download,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Import Tabs from Another Browser")
+                            if (kotlin.math.abs(cfg.sidebarUiScale - 1.0f) > 0.02f) {
+                                TextButton(
+                                    onClick = { onUpdateUiScale(1.0f) },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("Reset 100%", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA1A1AA))
+                                }
                             }
+                        }
+                        Slider(
+                            value = cfg.sidebarUiScale,
+                            onValueChange = { onUpdateUiScale(it) },
+                            valueRange = 0.75f..1.35f,
+                            modifier = Modifier.testTag("sidebar_ui_scale_slider")
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                "80%" to 0.80f,
+                                "90%" to 0.90f,
+                                "100%" to 1.00f,
+                                "115%" to 1.15f,
+                                "130%" to 1.30f
+                            ).forEach { (label, scaleVal) ->
+                                FilterChip(
+                                    selected = kotlin.math.abs(cfg.sidebarUiScale - scaleVal) < 0.03f,
+                                    onClick = { onUpdateUiScale(scaleVal) },
+                                    label = { Text(label, maxLines = 1) },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("sidebar_ui_scale_preset_${(scaleVal * 100).roundToInt()}")
+                                )
+                            }
+                        }
+
+                        SettingSwitchRow(
+                            title = "Show Essentials Space",
+                            subtitle = "Display top Essentials grid in sidebar",
+                            checked = cfg.showEssentialGrid,
+                            onCheckedChange = { onToggleOption(null, it, null, null, null, null, null) },
+                            testTag = "toggle_show_essentials"
+                        )
+                        SettingSwitchRow(
+                            title = "Show Pinned Tabs",
+                            subtitle = "Dedicated pinned tabs per workspace",
+                            checked = cfg.showPinnedTabs,
+                            onCheckedChange = { onToggleOption(null, null, it, null, null, null, null) },
+                            testTag = "toggle_show_pinned"
+                        )
+                        OutlinedButton(
+                            onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_sidebar_layout_editor_bottom_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Edit Side Panel Items & Reorder Sections")
                         }
                     }
                 }
             }
 
-            // Compact Mode & Edge Handle Bar Dimensions
-            if (matchesSearch("compact", "edge", "handle", "bar", "slider", "width", "dimension")) {
+            // SIDE PANEL: Edge Handle Bar
+            if (showCard(StudioSettingsCategory.SIDEBAR, "compact", "edge", "handle", "bar", "slider", "width", "dimension")) {
                 item {
-                    SectionCard(title = "COMPACT MODE & SIDEBAR EDGE BAR") {
+                    SectionCard(title = "SIDE PANEL • EDGE HANDLE BAR") {
                         SettingSwitchRow(
                             title = "Always Hide Side Panel Handle Bar",
                             subtitle = "Completely hide the visual handle bar on screen (side swipe gestures still work)",
@@ -1587,130 +1021,683 @@ fun SidebarCustomizationStudioSheet(
                 }
             }
 
-            // Sidebar Position & Width
-            item {
-                SectionCard(title = "SIDEBAR DOCK & SECTIONS") {
-                    Text(
-                        text = "Sidebar Side",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        SidebarPosition.entries.forEach { pos ->
-                            FilterChip(
-                                selected = cfg.position == pos,
-                                onClick = { onUpdatePosition(pos) },
-                                label = { Text(if (pos == SidebarPosition.LEFT) "Left" else "Right") },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("sidebar_pos_${pos.name.lowercase()}")
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Sidebar Width",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        SidebarWidthMode.entries.forEach { mode ->
-                            FilterChip(
-                                selected = cfg.widthMode == mode,
-                                onClick = { onUpdateWidthMode(mode) },
-                                label = { Text(mode.label, maxLines = 1) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("sidebar_width_${mode.name.lowercase()}")
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+            // GESTURES: System Back Swipe
+            if (showCard(StudioSettingsCategory.GESTURES, "back swipe", "navigation", "edge", "gesture", "side panel", "swipe")) {
+                item {
+                    SectionCard(title = "GESTURES • NAVIGATION BACK SWIPE") {
                         Text(
-                            text = "Side Panel UI Size: ${(cfg.sidebarUiScale * 100).roundToInt()}%",
+                            text = "System Back Swipe / Nav Button Behavior",
                             style = MaterialTheme.typography.labelLarge,
-                            color = Color(0xFFF4F4F6)
+                            color = Color(0xFFA1A1AA)
                         )
-                        if (kotlin.math.abs(cfg.sidebarUiScale - 1.0f) > 0.02f) {
-                            TextButton(
-                                onClick = { onUpdateUiScale(1.0f) },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                modifier = Modifier.height(28.dp)
-                            ) {
-                                Text("Reset 100%", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA1A1AA))
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            BackSwipeSidebarMode.entries.forEach { mode ->
+                                val isSelected = cfg.backSwipeSidebarMode == mode
+                                Surface(
+                                    onClick = {
+                                        onUpdateGesturesAndSession(null, null, null, null, mode, null, null, null)
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) Color(0xFF27272A) else Color(0xFF141417),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) Color(0xFFF4F4F6) else Color(0xFF27272A)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("back_swipe_mode_${mode.name.lowercase()}")
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = mode.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFF4F4F6)
+                                        )
+                                        Text(
+                                            text = mode.description,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFFA1A1AA)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
-                    Text(
-                        text = "Adjusts the size of tabs, icons, search bar, and buttons inside the side panel",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Slider(
-                        value = cfg.sidebarUiScale,
-                        onValueChange = { onUpdateUiScale(it) },
-                        valueRange = 0.75f..1.35f,
-                        modifier = Modifier.testTag("sidebar_ui_scale_slider")
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf(
-                            "80%" to 0.80f,
-                            "90%" to 0.90f,
-                            "100%" to 1.00f,
-                            "115%" to 1.15f,
-                            "130%" to 1.30f
-                        ).forEach { (label, scaleVal) ->
-                            FilterChip(
-                                selected = kotlin.math.abs(cfg.sidebarUiScale - scaleVal) < 0.03f,
-                                onClick = { onUpdateUiScale(scaleVal) },
-                                label = { Text(label, maxLines = 1) },
+                }
+            }
+
+            // GESTURES: Page Horizontal Swipe Mapping
+            if (showCard(StudioSettingsCategory.GESTURES, "page swipe", "horizontal", "direction", "side swipe", "left", "right", "back")) {
+                item {
+                    SectionCard(title = "GESTURES • SIDE SWIPE MAPPING") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            HorizontalSwipeNavigationMode.entries.forEach { mode ->
+                                val isSelected = cfg.horizontalSwipeMode == mode
+                                Surface(
+                                    onClick = { onUpdateHorizontalSwipeMode(mode) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) Color(0xFF27272A) else Color(0xFF141417),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) Color(0xFF8AB4F8) else Color(0xFF27272A)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("horizontal_swipe_mode_${mode.id}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        RadioButton(
+                                            selected = isSelected,
+                                            onClick = { onUpdateHorizontalSwipeMode(mode) },
+                                            colors = RadioButtonDefaults.colors(
+                                                selectedColor = Color(0xFF8AB4F8),
+                                                unselectedColor = Color(0xFF71717A)
+                                            )
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = mode.label,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFD4D4D8)
+                                            )
+                                            Text(
+                                                text = mode.description,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFA1A1AA)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // GESTURES: Tab & New Tab Swipes + Glance
+            if (showCard(StudioSettingsCategory.GESTURES, "tab swipe", "unload", "close", "new tab", "private", "glance", "peek")) {
+                item {
+                    SectionCard(title = "GESTURES • TAB SWIPES & AT A GLANCE") {
+                        Text(
+                            text = "Swipe Tab Right Action",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            TabSwipeAction.entries.forEach { action ->
+                                FilterChip(
+                                    selected = cfg.tabSwipeRightAction == action,
+                                    onClick = {
+                                        onUpdateGesturesAndSession(action, null, null, null, null, null, null, null)
+                                    },
+                                    label = { Text(action.label) }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Swipe Tab Left Action",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            TabSwipeAction.entries.forEach { action ->
+                                FilterChip(
+                                    selected = cfg.tabSwipeLeftAction == action,
+                                    onClick = {
+                                        onUpdateGesturesAndSession(null, action, null, null, null, null, null, null)
+                                    },
+                                    label = { Text(action.label) }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Swipe Left on '+ New Tab'",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            NewTabSwipeGestureAction.entries.forEach { gesture ->
+                                FilterChip(
+                                    selected = cfg.newTabSwipeLeftAction == gesture,
+                                    onClick = {
+                                        onUpdateGesturesAndSession(null, null, gesture, null, null, null, null, null)
+                                    },
+                                    label = { Text(gesture.label) }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Swipe Right on '+ New Tab'",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            NewTabSwipeGestureAction.entries.forEach { gesture ->
+                                FilterChip(
+                                    selected = cfg.newTabSwipeRightAction == gesture,
+                                    onClick = {
+                                        onUpdateGesturesAndSession(null, null, null, gesture, null, null, null, null)
+                                    },
+                                    label = { Text(gesture.label) }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        SettingSwitchRow(
+                            title = "Open Links in At a Glance Automatically",
+                            subtitle = "Opens tapped web links in a peek preview card instead of full navigation",
+                            checked = cfg.openLinksInGlanceAutomatically,
+                            onCheckedChange = onUpdateOpenLinksInGlanceAutomatically,
+                            testTag = "toggle_auto_glance_links"
+                        )
+                    }
+                }
+            }
+
+            // PRIVACY: Data Saver, Auto History Deletion, Security & Session Lifecycle
+            if (showCard(StudioSettingsCategory.PRIVACY, "data saver", "images", "history", "delete", "auto", "biometric", "lock", "fingerprint", "pin", "grace", "timeout", "private", "startup", "exit")) {
+                item {
+                    SectionCard(title = "PRIVACY & SECURITY") {
+                        SettingSwitchRow(
+                            title = "Data Saver (Skip Web Images)",
+                            subtitle = "Don't load images on websites to use less data. Reload after changing.",
+                            checked = cfg.dataSaverEnabled,
+                            onCheckedChange = onUpdateDataSaverEnabled,
+                            testTag = "toggle_data_saver"
+                        )
+                        SettingSwitchRow(
+                            title = "Lock Browser with Biometrics / PIN",
+                            subtitle = "Require fingerprint, face unlock, or device PIN when opening Zen Browser",
+                            checked = cfg.biometricLockEnabled,
+                            onCheckedChange = onUpdateBiometricLockEnabled,
+                            testTag = "toggle_biometric_lock"
+                        )
+                        AnimatedVisibility(visible = cfg.biometricLockEnabled) {
+                            Column(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("sidebar_ui_scale_preset_${(scaleVal * 100).roundToInt()}")
+                                    .fillMaxWidth()
+                                    .padding(top = 6.dp, bottom = 4.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "Require Lock After Leaving App",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = Color(0xFFA1A1AA)
+                                )
+                                BiometricGracePeriod.entries.forEach { period ->
+                                    val isSelected = cfg.biometricGracePeriod == period
+                                    Surface(
+                                        onClick = { onUpdateBiometricGracePeriod(period) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelected) Color(0xFF27272A) else Color(0xFF141418),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isSelected) Color(0xFFF4F4F6) else Color(0xFF27272A)
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp)
+                                            .testTag("biometric_grace_${period.id}")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = period.label,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
+                                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                            )
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFF8AB4F8),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        SettingSwitchRow(
+                            title = "Close All Private Tabs & Workspaces on Exit",
+                            subtitle = "Closes all private tabs and workspaces when the app closes",
+                            checked = cfg.closePrivateOnAppClose,
+                            onCheckedChange = {
+                                onUpdateGesturesAndSession(null, null, null, null, null, it, null, null)
+                            },
+                            testTag = "toggle_close_private_on_exit"
+                        )
+                    }
+                }
+
+                item {
+                    SectionCard(title = "PRIVACY • HISTORY & SESSION RESTORE") {
+                        Text(
+                            text = "Auto-Delete Browsing History",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            HistoryDeletionInterval.entries.forEach { interval ->
+                                val isSelected = uiState.privacyConfig.historyDeletionInterval == interval
+                                Surface(
+                                    onClick = { onUpdateHistoryDeletionInterval(interval) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) Color(0xFF27272A) else Color(0xFF141418),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) Color(0xFFF4F4F6) else Color(0xFF27272A)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("studio_history_interval_${interval.name.lowercase()}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = interval.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFA1A1AA),
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                        )
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = Color(0xFF8AB4F8),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "When Browser Reopens",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFA1A1AA)
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            StartupBehavior.entries.forEach { behavior ->
+                                Surface(
+                                    onClick = {
+                                        onUpdateGesturesAndSession(null, null, null, null, null, null, behavior, null)
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (cfg.startupBehavior == behavior) Color(0xFF27272A) else Color(0xFF141417),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (cfg.startupBehavior == behavior) Color(0xFFF4F4F6) else Color(0xFF27272A)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = behavior.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFF4F4F6)
+                                        )
+                                        Text(
+                                            text = behavior.description,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFFA1A1AA)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (cfg.startupBehavior == StartupBehavior.HOMEPAGE_AFTER_HOURS) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Inactivity Period Before Starting at Homepage: ${cfg.homepageAfterHoursThreshold} hours",
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Slider(
+                                value = cfg.homepageAfterHoursThreshold.toFloat(),
+                                onValueChange = {
+                                    onUpdateGesturesAndSession(
+                                        null, null, null, null, null, null, null,
+                                        it.roundToInt().coerceIn(1, 24)
+                                    )
+                                },
+                                valueRange = 1f..24f
                             )
                         }
                     }
+                }
+            }
 
-                    SettingSwitchRow(
-                        title = "Show Essentials Space",
-                        subtitle = "Display top Essentials grid in sidebar",
-                        checked = cfg.showEssentialGrid,
-                        onCheckedChange = { onToggleOption(null, it, null, null, null, null, null) },
-                        testTag = "toggle_show_essentials"
-                    )
-                    SettingSwitchRow(
-                        title = "Show Pinned Tabs",
-                        subtitle = "Dedicated pinned tabs per workspace",
-                        checked = cfg.showPinnedTabs,
-                        onCheckedChange = { onToggleOption(null, null, it, null, null, null, null) },
-                        testTag = "toggle_show_pinned"
-                    )
-                    OutlinedButton(
-                        onClick = { onOpenSheet(ActiveModalSheet.SIDEBAR_LAYOUT_EDITOR) },
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("open_sidebar_layout_editor_bottom_btn")
-                    ) {
-                        Icon(imageVector = Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Edit Side Panel Items & Reorder Sections")
+            // SYSTEM: Setup Wizard, Default Browser, Banners, Storage & Import
+            if (showCard(StudioSettingsCategory.SYSTEM, "setup", "wizard", "default browser", "permission", "storage", "download", "import", "notification", "banner")) {
+                item {
+                    val hasWritePerm = if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                        ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    } else true
+                    val permLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.RequestMultiplePermissions()
+                    ) { _ -> }
+
+                    SectionCard(title = "SETUP, DEFAULT BROWSER & PERMISSIONS") {
+                        OutlinedButton(
+                            onClick = {
+                                launchDefaultBrowserPrompt(context) { intent -> roleLauncher.launch(intent) }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("button_set_default_browser")
+                        ) {
+                            Icon(imageVector = Icons.Default.Language, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(if (isDefaultBrowser) "Zen Browser is Default (Tap to Manage)" else "Set Zen Browser as Default Browser")
+                        }
+
+                        OutlinedButton(
+                            onClick = onTriggerTutorial,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("trigger_sidebar_tutorial_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.HelpOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Run Browser Setup Wizard")
+                        }
+
+                        SettingSwitchRow(
+                            title = "Tab Close Notifications",
+                            subtitle = "Show notification banner pill when closing a tab",
+                            checked = cfg.showTabCloseNotification,
+                            onCheckedChange = { onUpdateNotificationSettings(it, null) },
+                            testTag = "toggle_tab_close_notification"
+                        )
+
+                        SettingSwitchRow(
+                            title = "Action & Tab Status Banners",
+                            subtitle = "Show status banners for tab actions and downloads",
+                            checked = cfg.showActionNotifications,
+                            onCheckedChange = { onUpdateNotificationSettings(null, it) },
+                            testTag = "toggle_action_notifications"
+                        )
+
+                        Button(
+                            onClick = {
+                                val permsToReq = mutableListOf<String>()
+                                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                                    permsToReq.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                    permsToReq.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                                }
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    permsToReq.add(android.Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                if (permsToReq.isNotEmpty()) {
+                                    permLauncher.launch(permsToReq.toTypedArray())
+                                } else {
+                                    context.startActivity(
+                                        Intent(
+                                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            Uri.fromParts("package", context.packageName, null)
+                                        )
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (hasWritePerm) Color(0xFF10B981) else Color(0xFF2563EB),
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("button_allow_storage_permission")
+                        ) {
+                            Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(if (hasWritePerm) "Storage & Notification Permissions Active" else "Allow Storage Permission")
+                        }
+
+                        OutlinedButton(
+                            onClick = onOpenImportTabs,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("button_open_import_tabs")
+                        ) {
+                            Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Import Tabs from Another Browser")
+                        }
+                    }
+                }
+            }
+
+            // SYSTEM: Fake Google Search & AI Overview Customization
+            if (showCard(StudioSettingsCategory.SYSTEM, "fake", "google", "search", "ai overview", "overview", "sadiq", "aura", "main character", "gemini", "custom text", "ai")) {
+                item {
+                    SectionCard(title = "CUSTOM AI OVERVIEW GENERATOR") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(Color(0xFF4285F4), Color(0xFFEC4899), Color(0xFFF59E0B))
+                                            )
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "Custom AI Overview Generator",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFF4F4F6)
+                                    )
+                                    Text(
+                                        text = "Edit text displayed in the Google Gemini AI Overview card",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFA1A1AA)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = localAiOverviewText,
+                            onValueChange = {
+                                localAiOverviewText = it
+                                onUpdateFakeSearchConfig(it, null, null, null)
+                            },
+                            placeholder = {
+                                Text(
+                                    text = "Sadiq is the main character... (Leave blank for default)",
+                                    color = Color(0xFF71717A),
+                                    fontSize = 13.sp
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp)
+                                .testTag("input_custom_ai_overview_text"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF18181E),
+                                unfocusedContainerColor = Color(0xFF141417),
+                                focusedBorderColor = Color(0xFF8AB4F8),
+                                unfocusedBorderColor = Color(0xFF272730),
+                                focusedTextColor = Color(0xFFF4F4F6),
+                                unfocusedTextColor = Color(0xFFE4E4E7)
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (localAiOverviewText.isBlank()) "Default text active" else "${localAiOverviewText.length} characters",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (localAiOverviewText.isBlank()) Color(0xFF8AB4F8) else Color(0xFFA1A1AA)
+                            )
+                            if (localAiOverviewText.isNotBlank()) {
+                                TextButton(
+                                    onClick = {
+                                        localAiOverviewText = ""
+                                        onUpdateFakeSearchConfig("", null, null, null)
+                                    },
+                                    modifier = Modifier.testTag("reset_ai_overview_text_btn")
+                                ) {
+                                    Text("Reset to Default", fontSize = 12.sp, color = Color(0xFFF87171))
+                                }
+                            }
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    val auraText = "Sadiq is the main character and why ask the obvious when you can see his aura. I mean even I am in awe how his personality, aura and also being so handsome and cute as a cat. also he uses arch btw."
+                                    localAiOverviewText = auraText
+                                    onUpdateFakeSearchConfig(auraText, null, null, null)
+                                },
+                                label = { Text("Aura Canon", fontSize = 11.sp) },
+                                modifier = Modifier.testTag("preset_aura_canon")
+                            )
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    val customText = "AI Overview: Verified main character aura index exceeds 9000%. System telemetry confirms Arch Linux mastery, peak charisma, and undeniable protagonist energy."
+                                    localAiOverviewText = customText
+                                    onUpdateFakeSearchConfig(customText, null, null, null)
+                                },
+                                label = { Text("Protagonist Telemetry", fontSize = 11.sp) },
+                                modifier = Modifier.testTag("preset_protagonist")
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = localFakeTrigger,
+                            onValueChange = {
+                                localFakeTrigger = it
+                                onUpdateFakeSearchConfig(null, it, null, null)
+                            },
+                            label = { Text("Search Query Trigger") },
+                            placeholder = { Text("? : who is the main character", color = Color(0xFF71717A)) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_fake_search_trigger"),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = localFakeHeadline,
+                            onValueChange = {
+                                localFakeHeadline = it
+                                onUpdateFakeSearchConfig(null, null, it, null)
+                            },
+                            label = { Text("First Result Headline (Optional)") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_fake_search_headline"),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = localFakeSnippet,
+                            onValueChange = {
+                                localFakeSnippet = it
+                                onUpdateFakeSearchConfig(null, null, null, it)
+                            },
+                            label = { Text("First Result Snippet (Optional)") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(80.dp)
+                                .testTag("input_fake_search_snippet"),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Button(
+                            onClick = {
+                                val trigger = localFakeTrigger.trim().ifBlank { "? : who is the main character" }
+                                onOpenFakeSearch(trigger)
+                                onDismiss()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8AB4F8)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("btn_preview_fake_search")
+                        ) {
+                            Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = Color(0xFF101014), modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Preview Fake Google Search", color = Color(0xFF101014), fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }
@@ -1923,12 +1910,16 @@ fun SidebarLayoutEditorSheet(
                                         color = if (isEnabled) Color(0xFFF4F4F6) else Color(0xFF71717A)
                                     )
                                     Text(
-                                        text = if (isEnabled) "Shown in Side Panel (#${currentIndex + 1})" else "Hidden from Side Panel",
+                                        text = when {
+                                            !isEnabled -> "Hidden from Side Panel"
+                                            tool == SidebarToolItem.AI_SIDE_PANEL -> "Shown next to Space Switcher"
+                                            else -> "Shown in Side Panel (#${currentIndex + 1})"
+                                        },
                                         style = MaterialTheme.typography.labelSmall,
                                         color = Color(0xFFA1A1AA)
                                     )
                                 }
-                                if (isEnabled) {
+                                if (isEnabled && tool != SidebarToolItem.AI_SIDE_PANEL) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         IconButton(
                                             onClick = { onMoveToolItem(tool, -1) },
@@ -2593,7 +2584,7 @@ fun FirefoxExtensionsSheet(
                 item {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "POPULAR DESKTOP WEBEXTENSIONS (AMO)",
+                        text = "POPULAR FIREFOX ADD-ONS (AMO)",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFFA1A1AA),
                         fontWeight = FontWeight.SemiBold
@@ -3716,12 +3707,60 @@ fun StartPageCustomizerSheet(
             }
 
             item {
-                SectionCard(title = "START PAGE GRADIENTS") {
+                SectionCard(title = "COLORFUL GRADIENTS") {
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        StartPageGradientPreset.entries.forEach { preset ->
+                        StartPageGradientPreset.entries.filter { it.isColorful }.forEach { preset ->
+                            val isSelected = cfg.startPageGradientId == preset.id
+                            Surface(
+                                onClick = {
+                                    onUpdateStartPage(null, null, null, null, null, preset.id, null, false, null, null, null)
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF141418),
+                                border = BorderStroke(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFF27272A)
+                                ),
+                                modifier = Modifier.testTag("start_gradient_${preset.id}")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                Brush.linearGradient(
+                                                    listOf(Color(preset.topHex), Color(preset.midHex), Color(preset.bottomHex))
+                                                )
+                                            )
+                                            .border(1.dp, Color.White.copy(alpha = 0.45f), CircleShape)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = preset.label,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = if (isSelected) Color(0xFFF4F4F6) else Color(0xFFD4D4D8)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                SectionCard(title = "DARK & MINIMAL GRADIENTS") {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        StartPageGradientPreset.entries.filter { !it.isColorful }.forEach { preset ->
                             val isSelected = cfg.startPageGradientId == preset.id
                             Surface(
                                 onClick = {
@@ -4724,8 +4763,12 @@ fun ZenLibrarySheet(
     onOpenInNewTab: (String) -> Unit = onNavigateUrl,
     onToggleBookmark: (TabEntity) -> Unit,
     onDeleteHistoryEntry: (String) -> Unit,
+    onClearRecentHistory: (Int) -> Unit = {},
     onClearAllHistory: () -> Unit,
     onDeleteDownloadItem: (String) -> Unit,
+    onPauseDownload: (String) -> Unit = {},
+    onResumeDownload: (String) -> Unit = {},
+    onCancelDownload: (String) -> Unit = {},
     onClearAllDownloads: () -> Unit,
     onDeleteOfflinePage: (String) -> Unit = {},
     onClearAllOfflinePages: () -> Unit = {},
@@ -5192,29 +5235,102 @@ fun ZenLibrarySheet(
                                 onDismissRequest = { showClearRecentConfirmDialog = false },
                                 title = {
                                     Text(
-                                        text = "Clear Recent Websites?",
+                                        text = "Erase Browsing History",
                                         style = MaterialTheme.typography.titleSmall,
                                         color = Color(0xFFF4F4F6)
                                     )
                                 },
                                 text = {
-                                    Text(
-                                        text = "This will wipe your recent websites history for privacy.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFFA1A1AA)
-                                    )
-                                },
-                                confirmButton = {
-                                    TextButton(
-                                        onClick = {
-                                            showClearRecentConfirmDialog = false
-                                            onClearAllHistory()
-                                        },
-                                        modifier = Modifier.testTag("confirm_clear_recent_button")
-                                    ) {
-                                        Text("Clear All", color = Color(0xFFF87171), fontWeight = FontWeight.Bold)
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(
+                                            text = "Choose what you want to erase:",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFFA1A1AA)
+                                        )
+                                        Surface(
+                                            onClick = {
+                                                showClearRecentConfirmDialog = false
+                                                onClearRecentHistory(1)
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = Color(0xFF23232A),
+                                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 48.dp)
+                                                .testTag("library_erase_recent_hour")
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                                contentAlignment = Alignment.CenterStart
+                                            ) {
+                                                Text(
+                                                    text = "Erase recent history (Last hour)",
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                        Surface(
+                                            onClick = {
+                                                showClearRecentConfirmDialog = false
+                                                onClearRecentHistory(24)
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = Color(0xFF23232A),
+                                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 48.dp)
+                                                .testTag("library_erase_recent_24h")
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                                contentAlignment = Alignment.CenterStart
+                                            ) {
+                                                Text(
+                                                    text = "Erase recent history (Last 24 hours)",
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                        Surface(
+                                            onClick = {
+                                                showClearRecentConfirmDialog = false
+                                                onClearAllHistory()
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = Color(0xFF331B1E),
+                                            border = BorderStroke(1.dp, Color(0xFFF87171).copy(alpha = 0.45f)),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 48.dp)
+                                                .testTag("confirm_clear_recent_button")
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                                contentAlignment = Alignment.CenterStart
+                                            ) {
+                                                Text(
+                                                    text = "Erase everything",
+                                                    color = Color(0xFFF87171),
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
                                     }
                                 },
+                                confirmButton = {},
                                 dismissButton = {
                                     TextButton(onClick = { showClearRecentConfirmDialog = false }) {
                                         Text("Cancel", color = Color(0xFFA1A1AA))
@@ -5240,7 +5356,7 @@ fun ZenLibrarySheet(
                             )
                             if (history.isNotEmpty()) {
                                 OutlinedButton(
-                                    onClick = onClearAllHistory,
+                                    onClick = { showClearRecentConfirmDialog = true },
                                     shape = RoundedCornerShape(8.dp),
                                     border = BorderStroke(1.dp, Color(0xFF3F3F46)),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
@@ -5455,6 +5571,9 @@ fun ZenLibrarySheet(
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 items(downloads, key = { it.id }) { item ->
+                                    val isDownloading = item.status.equals("downloading", ignoreCase = true)
+                                    val isPaused = item.status.equals("paused", ignoreCase = true)
+                                    val isActiveDownload = isDownloading || isPaused
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
                                         color = Color(0xFF18181E),
@@ -5470,9 +5589,9 @@ fun ZenLibrarySheet(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.Download,
+                                                imageVector = if (isPaused) Icons.Default.Pause else Icons.Default.Download,
                                                 contentDescription = null,
-                                                tint = Color(0xFFF4F4F6),
+                                                tint = if (isPaused) Color(0xFFFBBF24) else Color(0xFFF4F4F6),
                                                 modifier = Modifier.size(18.dp)
                                             )
                                             Spacer(modifier = Modifier.width(10.dp))
@@ -5485,7 +5604,7 @@ fun ZenLibrarySheet(
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
-                                                if (item.status == "downloading") {
+                                                if (isActiveDownload) {
                                                     val frac = if (item.totalBytes > 0)
                                                         (item.downloadedBytes.toFloat() / item.totalBytes).coerceIn(0f, 1f) else 0f
                                                     Spacer(modifier = Modifier.height(5.dp))
@@ -5493,7 +5612,14 @@ fun ZenLibrarySheet(
                                                         androidx.compose.material3.LinearProgressIndicator(
                                                             progress = { frac },
                                                             modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
-                                                            color = Color(0xFF60A5FA),
+                                                            color = if (isPaused) Color(0xFFFBBF24) else Color(0xFF60A5FA),
+                                                            trackColor = Color(0xFF2D2D3A)
+                                                        )
+                                                    } else if (isPaused) {
+                                                        androidx.compose.material3.LinearProgressIndicator(
+                                                            progress = { 0f },
+                                                            modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                                                            color = Color(0xFFFBBF24),
                                                             trackColor = Color(0xFF2D2D3A)
                                                         )
                                                     } else {
@@ -5506,13 +5632,14 @@ fun ZenLibrarySheet(
                                                     Spacer(modifier = Modifier.height(3.dp))
                                                     Text(
                                                         text = buildString {
+                                                            if (isPaused) append("Paused • ")
                                                             append(com.example.downloads.ZenDownloader.formatBytes(item.downloadedBytes))
                                                             if (item.totalBytes > 0) append(" of ${com.example.downloads.ZenDownloader.formatBytes(item.totalBytes)}")
-                                                            if (item.speedBytesPerSec > 0) append(" • ${com.example.downloads.ZenDownloader.formatBytes(item.speedBytesPerSec)}/s")
-                                                            if (item.etaSeconds > 0) append(" • ${if (item.etaSeconds >= 60) "${item.etaSeconds / 60}m ${item.etaSeconds % 60}s" else "${item.etaSeconds}s"} left")
+                                                            if (!isPaused && item.speedBytesPerSec > 0) append(" • ${com.example.downloads.ZenDownloader.formatBytes(item.speedBytesPerSec)}/s")
+                                                            if (!isPaused && item.etaSeconds > 0) append(" • ${if (item.etaSeconds >= 60) "${item.etaSeconds / 60}m ${item.etaSeconds % 60}s" else "${item.etaSeconds}s"} left")
                                                         },
                                                         style = MaterialTheme.typography.labelSmall,
-                                                        color = Color(0xFFA1A1AA),
+                                                        color = if (isPaused) Color(0xFFFDE68A) else Color(0xFFA1A1AA),
                                                         maxLines = 1
                                                     )
                                                 } else {
@@ -5525,16 +5652,47 @@ fun ZenLibrarySheet(
                                                     )
                                                 }
                                             }
-                                            IconButton(
-                                                onClick = { onDeleteDownloadItem(item.id) },
-                                                modifier = Modifier.size(28.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Close,
-                                                    contentDescription = "Remove Download",
-                                                    tint = Color(0xFF71717A),
-                                                    modifier = Modifier.size(15.dp)
-                                                )
+                                            if (isActiveDownload) {
+                                                IconButton(
+                                                    onClick = {
+                                                        if (isPaused) onResumeDownload(item.id) else onPauseDownload(item.id)
+                                                    },
+                                                    modifier = Modifier
+                                                        .size(48.dp)
+                                                        .testTag("library_download_pause_resume_${item.id}")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                                        contentDescription = if (isPaused) "Resume Download" else "Pause Download",
+                                                        tint = Color(0xFFF4F4F6),
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { onCancelDownload(item.id) },
+                                                    modifier = Modifier
+                                                        .size(48.dp)
+                                                        .testTag("library_download_cancel_${item.id}")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Close,
+                                                        contentDescription = "Cancel Download",
+                                                        tint = Color(0xFFF87171),
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            } else {
+                                                IconButton(
+                                                    onClick = { onDeleteDownloadItem(item.id) },
+                                                    modifier = Modifier.size(40.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Close,
+                                                        contentDescription = "Remove Download",
+                                                        tint = Color(0xFF71717A),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
                                             }
                                         }
                                     }

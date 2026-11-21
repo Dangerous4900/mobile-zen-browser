@@ -503,6 +503,99 @@ fun ZenExtensionFloatingPopup(
     onReloadTab: () -> Unit,
     onOpenExtensionSettings: () -> Unit
 ) {
+    var nativePopupSession by remember { mutableStateOf<org.mozilla.geckoview.GeckoSession?>(null) }
+
+    androidx.compose.runtime.DisposableEffect(nativePopupSession) {
+        val currentSession = nativePopupSession
+        onDispose {
+            runCatching {
+                if (currentSession != null && currentSession.isOpen) {
+                    currentSession.close()
+                }
+            }
+        }
+    }
+
+    if (nativePopupSession != null) {
+        val session = nativePopupSession!!
+        Dialog(
+            onDismissRequest = { nativePopupSession = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x99000000))
+                    .clickable { nativePopupSession = null }
+                    .padding(horizontal = 16.dp, vertical = 28.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .widthIn(min = 300.dp, max = 420.dp)
+                        .fillMaxWidth(0.94f)
+                        .heightIn(min = 320.dp, max = 560.dp)
+                        .clickable(enabled = false) {}
+                        .shadow(28.dp, RoundedCornerShape(20.dp))
+                        .testTag("native_gecko_extension_popup_dialog"),
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF161820),
+                    border = BorderStroke(1.dp, Color(0xFF2E3240))
+                ) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF1E222D))
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = extension.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFF4F4F6),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { nativePopupSession = null },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close Native Popup",
+                                    tint = Color(0xFFD4D4D8),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        androidx.compose.ui.viewinterop.AndroidView(
+                            factory = { ctx ->
+                                org.mozilla.geckoview.GeckoView(ctx).apply {
+                                    setSession(session)
+                                }
+                            },
+                            update = { gv ->
+                                if (gv.session !== session) {
+                                    runCatching {
+                                        if (gv.session != null) gv.releaseSession()
+                                    }
+                                    gv.setSession(session)
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -596,13 +689,31 @@ fun ZenExtensionFloatingPopup(
                     )
                 }
                 else -> {
-                    // General extension dialog
+                    // General extension dialog (with native GeckoView popup & options support)
                     AuthenticGeneralExtensionDialogContent(
                         extension = extension,
                         activeDomain = activeTabDomain,
                         onTogglePower = onToggleEnabled,
                         onRunScript = onRunScript,
                         onReloadTab = onReloadTab,
+                        onOpenNativePopup = {
+                            val lookup = extension.amoSlug.ifBlank { extension.name.ifBlank { extension.id } }
+                            com.example.gecko.ZenGeckoManager.openNativeExtensionPopup(lookup) { sess ->
+                                if (sess != null) {
+                                    nativePopupSession = sess
+                                } else {
+                                    onDismiss()
+                                }
+                            }
+                        },
+                        onOpenNativeOptions = {
+                            val lookup = extension.amoSlug.ifBlank { extension.name.ifBlank { extension.id } }
+                            if (com.example.gecko.ZenGeckoManager.openNativeExtensionOptions(lookup)) {
+                                onDismiss()
+                            } else {
+                                onOpenExtensionSettings()
+                            }
+                        },
                         onOpenSettings = onOpenExtensionSettings,
                         onClose = onDismiss,
                         onBackToMenu = onBackToMenu
@@ -1859,7 +1970,7 @@ private fun AuthenticReturnDislikeDialogContent(
 }
 
 /**
- * General Desktop Extension Options Popup:
+ * General Mobile Firefox Extension Options & Native Popup Dialog:
  */
 @Composable
 private fun AuthenticGeneralExtensionDialogContent(
@@ -1868,16 +1979,29 @@ private fun AuthenticGeneralExtensionDialogContent(
     onTogglePower: () -> Unit,
     onRunScript: (String) -> Unit,
     onReloadTab: () -> Unit,
+    onOpenNativePopup: () -> Unit,
+    onOpenNativeOptions: () -> Unit,
     onOpenSettings: () -> Unit,
     onClose: () -> Unit,
     onBackToMenu: () -> Unit
 ) {
+    val lookupKey = remember(extension.id, extension.amoSlug, extension.name) {
+        extension.amoSlug.ifBlank { extension.name.ifBlank { extension.id } }
+    }
+    val hasNativePopup = remember(lookupKey) {
+        com.example.gecko.ZenGeckoManager.hasNativePopupOrOptions(lookupKey)
+    }
+    val hasNativeOptions = remember(lookupKey) {
+        !com.example.gecko.ZenGeckoManager.getNativeOptionsUrl(lookupKey).isNullOrBlank()
+    }
+
     Surface(
         modifier = Modifier
             .widthIn(min = 300.dp, max = 380.dp)
             .fillMaxWidth(0.92f)
             .clickable(enabled = false) {}
-            .shadow(28.dp, RoundedCornerShape(24.dp)),
+            .shadow(28.dp, RoundedCornerShape(24.dp))
+            .testTag("general_extension_popup"),
         shape = RoundedCornerShape(24.dp),
         color = Color(0xFF1C1C22),
         border = BorderStroke(1.dp, Color(0xFF2E2E38))
@@ -1893,11 +2017,20 @@ private fun AuthenticGeneralExtensionDialogContent(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBackToMenu, modifier = Modifier.size(24.dp)) {
+                IconButton(onClick = onBackToMenu, modifier = Modifier.size(32.dp)) {
                     Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color(0xFFA1A1AA), modifier = Modifier.size(16.dp))
                 }
-                Text(extension.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFFF4F4F6), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                IconButton(onClick = onClose, modifier = Modifier.size(24.dp)) {
+                Text(
+                    extension.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF4F4F6),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center
+                )
+                IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
                     Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color(0xFFA1A1AA), modifier = Modifier.size(16.dp))
                 }
             }
@@ -1925,6 +2058,32 @@ private fun AuthenticGeneralExtensionDialogContent(
                 Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("Permissions: ${extension.permissions}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF9CA3AF), fontSize = 10.sp)
                     Text("Match: ${extension.matchPatterns}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF9CA3AF), fontSize = 10.sp)
+                }
+            }
+
+            if (hasNativePopup && extension.isEnabled) {
+                Button(
+                    onClick = onOpenNativePopup,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF09090C)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("open_native_extension_popup_btn")
+                ) {
+                    Text("Open Extension Popup", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            if (hasNativeOptions && extension.isEnabled) {
+                OutlinedButton(
+                    onClick = onOpenNativeOptions,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("open_native_extension_options_btn")
+                ) {
+                    Text("Extension Options Page", color = Color(0xFFE4E4E7), fontSize = 12.sp)
                 }
             }
 
